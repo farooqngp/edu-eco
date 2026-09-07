@@ -1,0 +1,30 @@
+name: SDLC bot token
+description: >
+  Generate a short-lived GitHub App installation token for the SDLC automation bot.
+  Centralizes the app-id/private-key/repo scoping so every workflow job just does
+  `uses: ./.github/actions/app-token` instead of repeating create-github-app-token config.
+
+inputs:
+  app_id:
+    description: GitHub App ID (secrets.SDLC_APP_ID)
+    required: true
+  private_key:
+    description: GitHub App private key, PEM contents (secrets.SDLC_APP_PRIVATE_KEY)
+    required: true
+
+outputs:
+  token:
+    description: Installation access token, valid for the rest of this job
+    value: ${{ steps.generate.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate installation token
+      id: generate
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app_id }}
+        private-key: ${{ inputs.private_key }}
+        owner: ${{ github.repository_owner }}
+        repositories: edu-eco

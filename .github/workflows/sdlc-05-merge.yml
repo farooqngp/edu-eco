@@ -1,0 +1,198 @@
+name: SDLC 05 - Merge
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: sdlc-pr-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: github.event.review.state == 'approved' && github.event.pull_request.base.ref == 'dev'
+    runs-on: ubuntu-latest
+    env:
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - name: Guard managed branch and resolve issue/phase number
+        id: resolve
+        run: |
+          if [[ ! "$BRANCH_NAME" =~ ^feature/([0-9]+)-.*-phase-([0-9]+)$ ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "issue_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "phase_number=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.resolve.outputs.skip == 'false'
+        with:
+          ref: dev
+
+      - name: Generate app token
+        id: app-token
+        if: steps.resolve.outputs.skip == 'false'
+        uses: ./.github/actions/app-token
+        with:
+          app_id: ${{ secrets.SDLC_APP_ID }}
+          private_key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+
+      - name: Export token to job environment
+        if: steps.resolve.outputs.skip == 'false'
+        run: echo "GH_TOKEN=${{ steps.app-token.outputs.token }}" >> "$GITHUB_ENV"
+
+      - name: Wait for required status checks
+        id: checks
+        if: steps.resolve.outputs.skip == 'false'
+        run: |
+          # Polls up to ~10 minutes. For a high-CI-volume repo, prefer switching this to
+          # an event-driven check_suite/workflow_run trigger instead of polling.
+          STATUS="PENDING"
+          for i in $(seq 1 20); do
+            STATUS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json statusCheckRollup \
+              --jq '
+                [.statusCheckRollup[]?.conclusion // .statusCheckRollup[]?.state // "PENDING"] as $c
+                | if ($c | length) == 0 then "NONE"
+                  elif ($c | any(. == "PENDING" or . == "" or . == "IN_PROGRESS" or . == "QUEUED")) then "PENDING"
+                  elif ($c | all(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")) then "SUCCESS"
+                  else "FAILURE"
+                  end')
+            if [ "$STATUS" != "PENDING" ]; then break; fi
+            sleep 30
+          done
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Block on failing checks
+        if: steps.resolve.outputs.skip == 'false' && steps.checks.outputs.status == 'FAILURE'
+        run: |
+          gh issue edit "${{ steps.resolve.outputs.issue_number }}" --repo "$REPO" --add-label "sdlc:blocked" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "🚧 Approved, but required status checks are failing. Automation will not merge — please fix checks or push a manual fix."
+
+      - name: Attempt merge
+        id: try_merge
+        if: steps.resolve.outputs.skip == 'false' && steps.checks.outputs.status != 'FAILURE'
+        run: |
+          if gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Diagnose merge failure
+        # gh pr merge fails for reasons an agent can and cannot fix. Only a real conflict
+        # (DIRTY) or a stale branch (BEHIND) is something "merge dev into the branch" can
+        # resolve. BLOCKED/DRAFT/other states mean a human/branch-protection requirement
+        # isn't satisfied yet — routing those into the conflict-resolution agent would
+        # produce a false "conflict resolved" report and mislabel the real cause.
+        id: diagnose
+        if: steps.try_merge.outputs.merged == 'false'
+        run: |
+          STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus')
+          echo "merge_state_status=$STATE" >> "$GITHUB_OUTPUT"
+          case "$STATE" in
+            DIRTY|BEHIND) echo "is_conflict=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "is_conflict=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Mark blocked (non-conflict merge requirement unmet)
+        if: steps.try_merge.outputs.merged == 'false' && steps.diagnose.outputs.is_conflict == 'false'
+        env:
+          MERGE_STATE_STATUS: ${{ steps.diagnose.outputs.merge_state_status }}
+        run: |
+          gh issue edit "${{ steps.resolve.outputs.issue_number }}" --repo "$REPO" --add-label "sdlc:blocked" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "🚧 Approved, but GitHub reports this PR isn't mergeable for a non-conflict reason (mergeStateStatus: \`${MERGE_STATE_STATUS}\`) — e.g. an unsatisfied branch-protection requirement (additional required reviewers, required checks not yet reported, merge queue, etc.), not a code conflict. This needs a human to check the branch protection rules on \`dev\` or provide the missing approval/check; the agent will not attempt a conflict-resolution fix here since there's no conflict to resolve."
+
+      - uses: actions/checkout@v4
+        if: steps.try_merge.outputs.merged == 'false' && steps.diagnose.outputs.is_conflict == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ env.GH_TOKEN }}
+
+      - name: Look up issue assignee
+        id: assignee
+        if: steps.try_merge.outputs.merged == 'false' && steps.diagnose.outputs.is_conflict == 'true'
+        run: |
+          A=$(gh issue view "${{ steps.resolve.outputs.issue_number }}" --repo "$REPO" \
+            --json assignees --jq '.assignees[0].login // ""')
+          echo "login=$A" >> "$GITHUB_OUTPUT"
+
+      - name: Render conflict-resolution prompt
+        id: render_conflict
+        if: steps.try_merge.outputs.merged == 'false' && steps.diagnose.outputs.is_conflict == 'true'
+        env:
+          ASSIGNEE: ${{ steps.assignee.outputs.login }}
+        run: |
+          DELIM="SDLC_EOF_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${RANDOM}${RANDOM}"
+          {
+            echo "prompt<<$DELIM"
+            bash .github/scripts/render-template.sh .github/prompts/resolve-conflict.md \
+              "PR_NUMBER=$PR_NUMBER" "REPO=$REPO" "BRANCH_NAME=$BRANCH_NAME" "ASSIGNEE=$ASSIGNEE"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run conflict-resolution agent
+        id: claude_conflict
+        if: steps.try_merge.outputs.merged == 'false' && steps.diagnose.outputs.is_conflict == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ env.GH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          base_branch: ${{ github.event.pull_request.head.ref }}
+          prompt: ${{ steps.render_conflict.outputs.prompt }}
+          claude_args: |
+            --allowedTools "Bash,Read,Write,Edit,Grep,Glob"
+
+      - name: Retry merge after conflict resolution
+        id: retry_merge
+        if: >
+          steps.try_merge.outputs.merged == 'false' &&
+          steps.diagnose.outputs.is_conflict == 'true' &&
+          steps.claude_conflict.outputs.conclusion == 'success'
+        run: |
+          if gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark blocked if still unresolved
+        if: >
+          steps.try_merge.outputs.merged == 'false' &&
+          steps.diagnose.outputs.is_conflict == 'true' &&
+          (steps.claude_conflict.outputs.conclusion != 'success' || steps.retry_merge.outputs.merged != 'true')
+        run: |
+          gh issue edit "${{ steps.resolve.outputs.issue_number }}" --repo "$REPO" --add-label "sdlc:blocked" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "🚧 Could not merge automatically — a merge conflict needs human resolution (see the agent's comment above, if any, for details). Push a fix to \`${BRANCH_NAME}\` and re-request review to resume."
+
+      - name: Advance phase or complete issue
+        if: steps.try_merge.outputs.merged == 'true' || steps.retry_merge.outputs.merged == 'true'
+        env:
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.issue_number }}
+          PHASE_NUMBER: ${{ steps.resolve.outputs.phase_number }}
+        run: |
+          PLAN_BODY=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" --paginate \
+            --jq '[.[] | select(.body | test("## 📋 Development Plan"))] | last | .body')
+          TOTAL_PHASES=$(printf '%s' "$PLAN_BODY" | grep -oP '(?<=phases=)\d+' | head -n1)
+
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+            --remove-label "sdlc:in-review,sdlc:changes-requested,sdlc:blocked" || true
+
+          if [ "$PHASE_NUMBER" -lt "$TOTAL_PHASES" ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "sdlc:phase-ready"
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+              "✅ Phase ${PHASE_NUMBER}/${TOTAL_PHASES} merged into \`dev\`. Starting phase $((PHASE_NUMBER + 1))."
+          else
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+              --remove-label "sdlc:in-development" --add-label "sdlc:done"
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+              "🎉 Final phase (${PHASE_NUMBER}/${TOTAL_PHASES}) merged into \`dev\`. Issue complete."
+            gh issue close "$ISSUE_NUMBER" --repo "$REPO" --reason completed
+          fi

@@ -1,0 +1,142 @@
+name: SDLC Plan Agent (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+      mode:
+        # "initial" | "revise"
+        required: true
+        type: string
+      feedback:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    env:
+      REPO: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ inputs.issue_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Generate app token
+        id: app-token
+        uses: ./.github/actions/app-token
+        with:
+          app_id: ${{ secrets.SDLC_APP_ID }}
+          private_key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+
+      - name: Export token to job environment
+        run: echo "GH_TOKEN=${{ steps.app-token.outputs.token }}" >> "$GITHUB_ENV"
+
+      - name: Fetch issue metadata
+        id: issue
+        run: |
+          DATA=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,assignees)
+          echo "title=$(echo "$DATA" | jq -r .title)" >> "$GITHUB_OUTPUT"
+          echo "assignee=$(echo "$DATA" | jq -r '.assignees[0].login // ""')" >> "$GITHUB_OUTPUT"
+
+      - name: Set planning label
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+            --remove-label "sdlc:planning-failed,sdlc:rejected,sdlc:awaiting-plan-approval,sdlc:revision-limit-reached" \
+            --add-label "sdlc:planning" || true
+
+      - name: Compute plan version and revision count
+        id: version
+        run: |
+          bash .github/scripts/plan-version.sh "$REPO" "$ISSUE_NUMBER" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Post replanning boundary marker
+        # A fresh cycle (mode=initial) after at least one prior plan comment means this run
+        # was triggered by /replan (or a manual sdlc:planning label add) after a reject or
+        # planning failure. Mark the boundary so revision counting resets for the new cycle.
+        if: inputs.mode == 'initial' && fromJSON(steps.version.outputs.total_plans) > 0
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+            "🔁 Replanning issue — starting a fresh plan cycle (previous history preserved above, revision count reset)."
+
+      - name: Render planning prompt
+        id: render
+        env:
+          MODE: ${{ inputs.mode }}
+          FEEDBACK: ${{ inputs.feedback }}
+          PLANS_SINCE_BOUNDARY: ${{ steps.version.outputs.plans_since_boundary }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.title }}
+          ISSUE_ASSIGNEE: ${{ steps.issue.outputs.assignee }}
+          PLAN_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$MODE" = "revise" ]; then
+            TEMPLATE=.github/prompts/plan-revise.md
+            REVISION_NUMBER="$PLANS_SINCE_BOUNDARY"
+            NEXT_REVISION_NUMBER=$((REVISION_NUMBER + 1))
+            if [ "$NEXT_REVISION_NUMBER" -le 3 ]; then
+              REVISE_HINT="\`/revise <feedback or answers to the questions above>\` — request changes (revision ${NEXT_REVISION_NUMBER}/3)"
+            else
+              REVISE_HINT="_(revision limit reached — no further \`/revise\` available; please \`/approve\` or \`/reject\`)_"
+            fi
+          else
+            TEMPLATE=.github/prompts/plan.md
+            REVISION_NUMBER=0
+            REVISE_HINT=""
+          fi
+          PREVIOUS_VERSION=$((PLAN_VERSION - 1))
+          # Unique delimiter: rendered content (title/feedback are user-controlled) must
+          # not be able to collide with it and truncate the multiline output.
+          DELIM="SDLC_EOF_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${RANDOM}${RANDOM}"
+          {
+            echo "prompt<<$DELIM"
+            bash .github/scripts/render-template.sh "$TEMPLATE" \
+              "ISSUE_NUMBER=$ISSUE_NUMBER" \
+              "REPO=$REPO" \
+              "ISSUE_TITLE=$ISSUE_TITLE" \
+              "ASSIGNEE=$ISSUE_ASSIGNEE" \
+              "PLAN_VERSION=$PLAN_VERSION" \
+              "PREVIOUS_VERSION=$PREVIOUS_VERSION" \
+              "REVISION_NUMBER=$REVISION_NUMBER" \
+              "REVISE_HINT=$REVISE_HINT" \
+              "FEEDBACK=$FEEDBACK"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run planning agent
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ env.GH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          base_branch: dev
+          prompt: ${{ steps.render.outputs.prompt }}
+          claude_args: |
+            --allowedTools "Bash(gh issue comment:*),Bash(gh api:*),Read,Grep,Glob"
+
+      - name: Mark awaiting approval (and revision-limit if applicable)
+        if: steps.claude.outputs.conclusion == 'success'
+        env:
+          PLANS_SINCE_BOUNDARY: ${{ steps.version.outputs.plans_since_boundary }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+            --remove-label "sdlc:planning" --add-label "sdlc:awaiting-plan-approval"
+          if [ "$MODE" = "revise" ] && [ "$PLANS_SINCE_BOUNDARY" -ge 3 ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "sdlc:revision-limit-reached" || true
+          fi
+
+      - name: Mark planning failed
+        if: steps.claude.outputs.conclusion != 'success'
+        env:
+          ISSUE_ASSIGNEE: ${{ steps.issue.outputs.assignee }}
+          CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+            --remove-label "sdlc:planning" --add-label "sdlc:planning-failed"
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+            "⚠️ @${ISSUE_ASSIGNEE} planning failed to complete (job conclusion: ${CONCLUSION}). Comment \`/replan\` to retry."
