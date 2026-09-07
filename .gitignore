@@ -432,3 +432,25 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Node / Angular / Nx (src/frontend/web)
+node_modules/
+dist/
+.angular/
+.nx/cache/
+.nx/workspace-data/
+npm-debug.log*
+
+# Python / uv (src/agentic)
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Terraform/Bicep local state, if introduced later
+.terraform/
+*.tfstate
+*.tfstate.*

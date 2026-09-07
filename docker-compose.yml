@@ -1,0 +1,80 @@
+# Local development infrastructure only — dev-only credentials throughout, never reuse
+# these in any shared/staging/prod environment. Services (gateway, .NET microservices,
+# the Python agentic service) are NOT defined here; each runs locally via `dotnet run` /
+# `uv run` / `nx serve` and points its own config at the ports below.
+#
+# Usage: docker compose up -d
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: edu-eco-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "DevOnly_Passw0rd!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: edu-eco-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: edu-eco-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: edu-eco-rabbitmq
+    environment:
+      # Explicit dev user/pass — the image's default `guest`/`guest` account is restricted
+      # to loopback connections only, which a container-network client does not satisfy.
+      RABBITMQ_DEFAULT_USER: "eduecodev"
+      RABBITMQ_DEFAULT_PASS: "DevOnly_Passw0rd!"
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # management UI — http://localhost:15672
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  sqlserver-data:
+  elasticsearch-data:
+  redis-data:
+  rabbitmq-data:
