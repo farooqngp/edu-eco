@@ -94,13 +94,15 @@ MassTransit:
   `LoggingBehavior`, `UnitOfWorkBehavior` — commands don't call `SaveChanges` themselves),
   port *interface shapes* for cache/lock/search/unit-of-work/current-user, `PagedResult<T>`.
   References only `BuildingBlocks.Domain`.
-- **`BuildingBlocks.Infrastructure`** — outbox model-builder conventions +
-  `SaveChangesInterceptor` that dispatches pending domain events via MediatR before the
-  physical save; Dapper read-repository base helpers. References
-  `BuildingBlocks.Application`.
+- **`BuildingBlocks.Infrastructure`** — `SaveChangesInterceptor` that dispatches pending
+  domain events via MediatR before the physical save; Dapper read-repository base helpers.
+  References `BuildingBlocks.Application`. No reference to MassTransit — it has no outbox
+  knowledge at all.
 - **`BuildingBlocks.Messaging`** — MassTransit + RabbitMQ configuration, MassTransit's
   built-in EF Core transactional outbox (`AddEntityFrameworkOutbox<TDbContext>` +
-  `UseBusOutbox()` — not hand-rolled). References `BuildingBlocks.Application`.
+  `UseBusOutbox()` — not hand-rolled) **including the outbox model-builder entity
+  registration**. References `BuildingBlocks.Application`. Infrastructure and Messaging
+  never reference each other — a service's own `DbContext`/`Program.cs` composes both.
 - **`BuildingBlocks.Caching`** — `RedisCacheService`, `RedisDistributedLock` (hand-rolled
   `SET key token NX PX ttl` + Lua compare-and-delete release — not RedLock.net, since a
   single Redis instance per `docker-compose.yml` has no multi-node split-brain concern to

@@ -156,12 +156,16 @@ shouldn't reference MassTransit transitively):
   `LoggingBehavior`, `UnitOfWorkBehavior` — commands don't call `SaveChanges` themselves),
   port interfaces (`ICacheService`, `IDistributedLock`, `ISearchIndex<T>`, `IUnitOfWork`,
   `ICurrentUser`), `PagedResult<T>`. References only `BuildingBlocks.Domain`.
-- **`BuildingBlocks.Infrastructure`** — EF Core base conventions (outbox model-builder
-  extension, `SaveChangesInterceptor` that dispatches domain events), Dapper read-repository
-  base helpers. References `BuildingBlocks.Application`.
+- **`BuildingBlocks.Infrastructure`** — `SaveChangesInterceptor` that dispatches pending
+  domain events via MediatR before the physical EF Core save; Dapper read-repository base
+  helpers. References `BuildingBlocks.Application`. Has **no** reference to MassTransit —
+  it knows nothing about the outbox.
 - **`BuildingBlocks.Messaging`** — MassTransit + RabbitMQ bus configuration, the
   transactional-outbox wiring (`AddEntityFrameworkOutbox<TDbContext>` + `UseBusOutbox()` —
-  not hand-rolled). References `BuildingBlocks.Application`.
+  not hand-rolled) **including the outbox model-builder entity registration**. References
+  `BuildingBlocks.Application`. A service's own `DbContext.OnModelCreating` and
+  `Program.cs` are what call into both Infrastructure's interceptor registration *and*
+  Messaging's outbox wiring — Infrastructure and Messaging never reference each other.
 - **`BuildingBlocks.Caching`** — `RedisCacheService : ICacheService`,
   `RedisDistributedLock : IDistributedLock` (hand-rolled `SET NX PX` + Lua release, not
   RedLock.net — single Redis instance per `docker-compose.yml` has no split-brain concern).
