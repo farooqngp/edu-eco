@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Flat immutable record DTOs only — cross-service integration events. Zero package
+    references, zero project references, ever (see CLAUDE.md's "Two kinds of Contracts").
+  -->
+
+</Project>

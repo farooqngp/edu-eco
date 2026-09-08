@@ -206,9 +206,9 @@ referenced everywhere.
 
 - **Shared BuildingBlocks** (`src/backend/BuildingBlocks/**`) and **Contracts**
   (`src/shared/contracts/dotnet/**`): build+test the specific changed `.csproj` via
-  `dotnet build|test src/backend/BuildingBlocks.sln -c Release` (one solution covering all 7
-  BuildingBlocks projects + `EduEco.Contracts`), **plus** the build+test commands for every
-  service above (see Exception note).
+  `dotnet build|test EduEcosystem.sln -c Release` (the root solution covering all 7
+  BuildingBlocks projects + `EduEco.Contracts` + the Architecture fitness-test project),
+  **plus** the build+test commands for every service above (see Exception note).
 
 - **Architecture fitness tests** (any backend change): `dotnet test tests/backend/Architecture
   -c Release` — must pass on every backend PR regardless of which service/BuildingBlocks

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ICurrentUser's concrete implementation (HttpContext claims), shared authorization policy
+    names/constants, JWT helpers reused by both the gateway and each service. Package
+    references (e.g. Microsoft.AspNetCore.Http.Abstractions) are added when this project's
+    actual implementation is designed — not pre-declared speculatively.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Structured logging (Serilog enrichers), correlation-id propagation, and a shared
+    OpenTelemetry tracing/metrics setup extension. Package references (Serilog, OpenTelemetry
+    packages) are added when this project's actual implementation is designed — not
+    pre-declared speculatively.
+  -->
+
+</Project>
