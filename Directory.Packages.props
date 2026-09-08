@@ -1,0 +1,18 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <!--
+    Central Package Management: every .csproj's <PackageReference> omits Version; the
+    pinned version lives in exactly one place, here. Intentionally empty for now — no
+    package has been referenced anywhere in the repo yet (Phase 2, BuildingBlocks, is the
+    first phase that will). When a phase adds the first reference to a new package, add its
+    <PackageVersion> entry here in that same PR — do not pre-declare versions speculatively
+    for packages nothing references yet.
+  -->
+  <ItemGroup>
+  </ItemGroup>
+
+</Project>
