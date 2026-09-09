@@ -1,13 +1,18 @@
 # edu-eco Platform Architecture
 
-Status: approved, phase 1 (repo scaffolding) implemented; this revision reconciles that
-baseline with a more detailed reference structure the user supplied
-(`mono-repo-structure.md`) — BuildingBlocks split into 7 focused projects, EF Core+Dapper,
-per-service `Contracts`, top-level `tests/` with Architecture fitness tests, and a
-multi-agent Python system. No `src/` exists yet, so this is a pure docs/convention update,
-not a migration. Companion to `CLAUDE.md` (condensed, agent-facing conventions) and
-`docs/SDLC_AUTOMATION.md` (the issue→PR pipeline this architecture is executed through).
-Individual decisions are recorded as ADRs under `docs/architecture/ADR-*.md` as each lands.
+Status: approved, phase 1 (repo scaffolding) implemented; BuildingBlocks (7 focused
+projects) scaffolded as empty `.csproj` shells, zero `.cs` files written yet. This revision
+reverses the earlier EF Core (writes) + Dapper (reads) split to **Dapper + Dapper Contrib
+only, no EF Core anywhere in this repo** — a deliberate architectural decision, made before
+any BuildingBlocks code was written, driven by wanting explicit hand-tuned SQL and no
+ORM change-tracking magic across the whole stack, not just the read side. This revision
+also adds conventions for table/column documentation, audit columns, soft delete, and
+audit-trail logging that apply repo-wide once any table is created. Since no BuildingBlocks
+`.cs` files or services exist yet, this is a pure docs/convention update, not a code
+migration. Companion to `CLAUDE.md` (condensed, agent-facing conventions, now split into
+`docs/conventions/*.md` by topic) and `docs/SDLC_AUTOMATION.md` (the issue→PR pipeline this
+architecture is executed through). Individual decisions are recorded as ADRs under
+`docs/architecture/ADR-*.md` as each lands.
 
 ## Why this exists
 
@@ -27,10 +32,13 @@ backend service — precisely enough to hand to that pipeline as a sequence of p
   microservices are never called directly by the frontend.
 - Backend: .NET microservices (Clean Architecture, 5 projects each — see below) for core
   domains + a Python multi-agent AI system for LLM-agent work.
-- Databases: **PostgreSQL** (transactional, database-per-service; EF Core for writes,
-  Dapper for reads — see "Data access") + Elasticsearch (non-transactional/search/read-model,
-  always derived, never source of truth). Cache: Redis. Messaging: RabbitMQ + MassTransit
-  (transactional outbox).
+- Databases: **PostgreSQL** (transactional, database-per-service; Dapper + Dapper Contrib
+  for all data access, writes included — no EF Core anywhere, see "Data access") +
+  Elasticsearch (non-transactional/search/read-model, always derived, never source of
+  truth). Cache: Redis. Messaging: RabbitMQ + MassTransit with a hand-rolled transactional
+  outbox (MassTransit's built-in outbox only supports EF Core/MongoDB, not Dapper —
+  [confirmed](https://github.com/MassTransit/MassTransit/discussions/5600) — see
+  "Inter-service communication").
 - Starter service set (renameable as real product domains land): `Identity`, `Customer`,
   `Order`, `Notification`, `Search` — plus the Python multi-agent system.
 - Error handling: `Result`/`Error` pattern for expected domain-rule violations; exceptions
@@ -56,10 +64,12 @@ Five projects, one-way dependencies `Api → Infrastructure → Application → 
   and the *interfaces* Infrastructure implements (`IUserRepository`, `IUserReadRepository`,
   `ICacheService`, `ISearchIndex<T>`, `IUnitOfWork`, `ICurrentUser`). Defines ports; never
   references infra packages.
-- **Infrastructure** — EF Core `DbContext` + migrations (PostgreSQL, command/write side),
-  Dapper read repositories (query side), Elasticsearch adapters, MassTransit consumers +
-  outbox wiring (via `BuildingBlocks.Messaging`), Redis decorators (via
-  `BuildingBlocks.Caching`). The only project referencing infra packages directly.
+- **Infrastructure** — Dapper Contrib repositories for simple single-table writes (via the
+  shared `AuditableRepository<TEntity,TId>` base — see "Data access"), hand-written Dapper
+  SQL for anything multi-table or read-side, DbUp-versioned `.sql` migration scripts
+  (PostgreSQL), Elasticsearch adapters, MassTransit consumers + the hand-rolled outbox relay
+  (via `BuildingBlocks.Messaging`), Redis decorators (via `BuildingBlocks.Caching`). The
+  only project referencing infra packages directly.
 - **Contracts** — that service's own public REST request/response DTOs (records only). Not
   to be confused with `src/shared/contracts/dotnet` (`EduEco.Contracts`, cross-service
   integration events) — see "Two kinds of Contracts" below.
@@ -94,15 +104,21 @@ MassTransit:
   `LoggingBehavior`, `UnitOfWorkBehavior` — commands don't call `SaveChanges` themselves),
   port *interface shapes* for cache/lock/search/unit-of-work/current-user, `PagedResult<T>`.
   References only `BuildingBlocks.Domain`.
-- **`BuildingBlocks.Infrastructure`** — `SaveChangesInterceptor` that dispatches pending
-  domain events via MediatR before the physical save; Dapper read-repository base helpers.
-  References `BuildingBlocks.Application`. No reference to MassTransit — it has no outbox
-  knowledge at all.
-- **`BuildingBlocks.Messaging`** — MassTransit + RabbitMQ configuration, MassTransit's
-  built-in EF Core transactional outbox (`AddEntityFrameworkOutbox<TDbContext>` +
-  `UseBusOutbox()` — not hand-rolled) **including the outbox model-builder entity
-  registration**. References `BuildingBlocks.Application`. Infrastructure and Messaging
-  never reference each other — a service's own `DbContext`/`Program.cs` composes both.
+- **`BuildingBlocks.Infrastructure`** — Dapper/Dapper Contrib base repository conventions
+  (`AuditableRepository<TEntity,TId>` — stamps audit columns, turns deletes into soft-delete
+  updates, writes the audit-log row, all inside one `IDbTransaction`), the DbUp migration
+  runner, and the soft-delete `v_{table}` view convention. References
+  `BuildingBlocks.Application`. No reference to MassTransit or EF Core — it has no outbox
+  knowledge at all, and no ORM change-tracking.
+- **`BuildingBlocks.Messaging`** — MassTransit + RabbitMQ configuration, plus a hand-rolled
+  transactional outbox: an `outbox_messages` table written via the *same* Dapper
+  `IDbTransaction` as the business write (atomicity is free — no two-phase commit needed),
+  and an `OutboxRelayService : BackgroundService` that polls unpublished rows, calls
+  `IBus.Publish`, and marks them dispatched. Hand-rolled because MassTransit's built-in
+  transactional outbox only supports EF Core and MongoDB, not Dapper
+  ([confirmed](https://github.com/MassTransit/MassTransit/discussions/5600)). References
+  `BuildingBlocks.Application`. Infrastructure and Messaging never reference each other — a
+  service's own composition root (`Program.cs`) wires both.
 - **`BuildingBlocks.Caching`** — `RedisCacheService`, `RedisDistributedLock` (hand-rolled
   `SET key token NX PX ttl` + Lua compare-and-delete release — not RedLock.net, since a
   single Redis instance per `docker-compose.yml` has no multi-node split-brain concern to
@@ -119,27 +135,76 @@ MassTransit:
 implementations, a `{Service}.Contracts` project, or any compile-time `ProjectReference`
 between two services' Application layers.
 
-## Data access: EF Core + Dapper
+## Data access: Dapper + Dapper Contrib (no EF Core, anywhere)
 
-EF Core owns the write side exclusively — every command goes through the `DbContext`,
-aggregate, and `SaveChangesAsync`, which is what makes the domain-event-dispatch
-interceptor and the transactional outbox work at all. Dapper owns the read side: queries
-that don't need change-tracking, or that benefit from hand-tuned SQL (lists, search-style
-filters, reports), go through a Dapper-based read repository implementing the same
-Application-layer query port, using the *same* connection string/database as the service's
-own `DbContext` — never a separate database. Dapper is never used to write; that would let
-state changes bypass the outbox and silently break the Elasticsearch-sync guarantee below.
+No EF Core reference exists anywhere in this repo, on the read or write side. Dapper
+Contrib's `Insert`/`Update`/`Get`/`GetAll` extension methods handle simple single-table
+writes (wrapped by the shared `AuditableRepository<TEntity,TId>` base in
+`BuildingBlocks.Infrastructure` — see below); hand-written SQL via plain Dapper handles
+anything multi-table, batch, or read-side (list/search/report-style queries). A Dapper
+read-repository implements the same Application-layer query port (`IOrderReadRepository`,
+etc.) using the *same* connection string as the service's writes — never a separate
+database.
+
+**Unit of work without change-tracking**: `IUnitOfWork` (`BuildingBlocks.Application`)
+wraps a single `IDbConnection`/`IDbTransaction` pair per request. Repositories take the
+ambient transaction rather than owning their own connection, so every write in one command
+handler commits atomically. `UnitOfWorkBehavior` (MediatR pipeline) opens the transaction
+before the handler runs and commits it after, only if the handler's `Result` is successful
+— same contract as before, different mechanism underneath.
+
+**Domain event dispatch without an interceptor**: repositories register the aggregates
+they touch on the ambient `IUnitOfWork` (e.g. `unitOfWork.TrackAggregate(entity)` on
+Insert/Update). After `UnitOfWorkBehavior` commits the transaction, it walks the tracked
+aggregates and dispatches their `DomainEvents` via MediatR — explicit rather than the
+implicit dispatch EF's `SavingChangesAsync` interceptor previously did, which fits Dapper's
+no-hidden-behavior philosophy better anyway.
+
+**Migrations**: [DbUp](https://dbup.readthedocs.io/), not EF Core migrations — plain
+versioned `.sql` scripts, checksummed and applied in order, no code-gen. Scripts live under
+`{Service}.Infrastructure/Migrations/NNNN_description.sql`, applied via a small
+`MigrationRunner` in `BuildingBlocks.Infrastructure` wrapping
+`DeployChanges.To.PostgresqlDatabase(...).WithScriptsEmbeddedInAssembly(...)`. Auto-run
+only when `ASPNETCORE_ENVIRONMENT == Development` — same gate as before, different tool.
+
+**Table/column documentation**: every `CREATE TABLE` migration script includes
+`COMMENT ON TABLE ...` / `COMMENT ON COLUMN ...` statements by hand, in the same script —
+real PostgreSQL catalog metadata (queryable via `information_schema` +
+`pg_catalog.col_description()`), the same RAG-ready target the EF `.HasComment()` approach
+was aiming for, just authored directly in SQL instead of generated from C# attributes.
+Enforcement: an integration test (Testcontainers Postgres) runs a service's migration
+scripts, then asserts every table/column has a non-null comment — fails the build if any
+table ships undocumented.
+
+**Audit columns + soft delete**: `IAuditableEntity`/`ISoftDeletableEntity` are implemented
+directly by `BuildingBlocks.Domain`'s `Entity<TId>` — every table-backed entity gets both,
+with zero opt-in code required anywhere. `AuditableRepository<TEntity,TId>` stamps
+`CreatedAtUtc`/`CreatedBy` or `LastModifiedAtUtc`/`LastModifiedBy` before every
+Insert/Update, and turns "delete" into `UPDATE ... SET is_deleted = true, deleted_at_utc =
+..., deleted_by = ...` — no physical `DELETE` is ever issued. Soft-delete filtering is
+convention plus a generated view, not automatic: DbUp creates `v_{table}` (`SELECT * FROM
+{table} WHERE is_deleted = false`) for every soft-deletable table; read-repositories query
+the view by default, and only an explicitly named `GetIncludingDeletedAsync` queries the
+base table directly. (This is the one place raw Dapper genuinely loses something EF's
+global `HasQueryFilter` gave for free — a filter no query could forget — the view is the
+closest substitute, but it's convention-enforced, not compiler-enforced.)
+
+**Audit-trail logging**: `AuditableRepository<TEntity,TId>` writes an `AuditLogEntry` row
+(`EntityName`, `EntityId`, `Action`, `ChangedAtUtc`, `ChangedBy`, `OldValues`/`NewValues` as
+JSON text, `CorrelationId` from `Activity.Current?.Id`) inside the *same* `IDbTransaction`
+as the business write — atomicity is free, so the audit trail can never drift out of sync
+with what actually happened.
 
 ## Database-per-service + Elasticsearch sync
 
 One logical PostgreSQL database per service (own connection string, own `DbContext`, own
 migrations folder — no service ever holds another service's connection string).
-Elasticsearch is always a derived read-model. Sync mechanism (no dual-write problem): a
-command handler changes an aggregate (via EF Core) → its domain events become integration
-events written to an outbox row **in the same DB transaction** as the entity change →
-MassTransit's transactional outbox delivers them to RabbitMQ at-least-once → an idempotent
-consumer (upsert by aggregate ID) projects the event into the corresponding ES index. ES
-documents are always rebuildable from PostgreSQL.
+Elasticsearch is always a derived read-model. Sync mechanism (no dual-write problem): a command handler changes an aggregate (via a
+Dapper Contrib repository) → its domain events become integration events written to the
+hand-rolled `outbox_messages` table **in the same DB transaction** as the entity change
+(see "Data access") → the `OutboxRelayService` background poller delivers them to RabbitMQ
+at-least-once → an idempotent consumer (upsert by aggregate ID) projects the event into the
+corresponding ES index. ES documents are always rebuildable from PostgreSQL.
 
 ## Redis usage
 
@@ -153,7 +218,7 @@ documents are always rebuildable from PostgreSQL.
 ## Inter-service communication
 
 Default: async, event-driven, RabbitMQ + MassTransit (`BuildingBlocks.Messaging`), using the
-transactional outbox above. RabbitMQ over Kafka (no high-throughput streaming/replay need at
+hand-rolled transactional outbox above. RabbitMQ over Kafka (no high-throughput streaming/replay need at
 this scale) and over Azure Service Bus (no confirmed cloud target — RabbitMQ runs identically
 in local docker-compose and any cloud target). Sync calls only when justified: REST
 (client-facing, what YARP proxies to) by default; gRPC reserved for latency-sensitive
@@ -266,7 +331,8 @@ run).
    draft assumed a 3-project consolidated BuildingBlocks and must be regenerated against
    this structure before filing.)*
 3. Identity service (full 5-project worked example incl. its own `Identity.Contracts`,
-   proves the pattern end-to-end, including the EF Core write-side + Dapper read-side split).
+   proves the pattern end-to-end, including the Dapper Contrib write-side + hand-written
+   Dapper read-side split, the DbUp migrations, and the hand-rolled outbox relay).
 4. Gateway wired to Identity only.
 5. Angular shell + feature-identity.
 6. CI workflows, verified green against phases 1–5.

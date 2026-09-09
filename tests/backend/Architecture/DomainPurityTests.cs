@@ -44,4 +44,22 @@ public class DomainPurityTests
 
         Assert.True(result.IsSuccessful, string.Join(", ", result.FailingTypeNames ?? []));
     }
+
+    [Theory]
+    [InlineData("BuildingBlocks.Infrastructure")]
+    [InlineData("BuildingBlocks.Messaging")]
+    public void BuildingBlocksInfrastructureLayer_Should_Not_Depend_On_EntityFrameworkCore(string assemblyName)
+    {
+        // Data access is Dapper + Dapper Contrib only, repo-wide — see docs/conventions/data-access.md.
+        // No EF Core reference is permitted anywhere, including Infrastructure/Messaging, which
+        // previously carried it for the write-side DbContext and the EF-based outbox respectively.
+        var assembly = Assembly.Load(assemblyName);
+
+        var result = Types.InAssembly(assembly)
+            .ShouldNot()
+            .HaveDependencyOnAny("Microsoft.EntityFrameworkCore")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful, string.Join(", ", result.FailingTypeNames ?? []));
+    }
 }
