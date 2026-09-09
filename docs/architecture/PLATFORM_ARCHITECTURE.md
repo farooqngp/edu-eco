@@ -235,6 +235,15 @@ specifically needs to see every backend assembly at once to assert cross-cutting
 grouping by type makes each category's infrastructure needs obvious (Integration needs
 `docker compose up`, Unit/Architecture don't).
 
+**Coverage gate**: `Domain` and `Application` projects (every service's, and BuildingBlocks')
+require 95% line coverage, enforced via `coverlet.msbuild`'s `/p:Threshold` — see CLAUDE.md's
+"Testing rules (code coverage)" for the exact command. Scoped deliberately to just these two
+layers: they hold the actual business logic and are cheap to unit-test in isolation, whereas
+`Infrastructure`/`Api`/`Contracts` (and the infra-flavored BuildingBlocks projects) are thin
+adapters/wiring better proven by `tests/backend/Integration` against real dependencies than
+by a line-coverage percentage — a 95% floor on `Program.cs` would just reward padding, not
+confidence.
+
 ## CI/CD
 
 Independent, path-filtered GitHub Actions workflows so a phase-scoped PR only builds what it

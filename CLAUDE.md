@@ -229,6 +229,37 @@ referenced everywhere.
   - Scoped to what changed: `npx nx affected -t lint,test,build --base=origin/dev`
   - If the phase touched one known project: `npx nx test <project>`, `npx nx lint <project>`, `npx nx build shell`
 
+### Testing rules (code coverage)
+
+**95% line coverage is required for every `{Service}.Domain` and `{Service}.Application`
+project** (and `BuildingBlocks.Domain`/`BuildingBlocks.Application`) — these are the layers
+that hold real business logic and are cheaply unit-testable in isolation, so there's no
+excuse for gaps. A PR that drops either project's coverage below 95% fails the build and
+must not be opened/merged.
+
+**Exempt from the 95% gate**: `Infrastructure`, `Api`, `Contracts`, and the infra-flavored
+BuildingBlocks projects (`Messaging`, `Caching`, `Observability`, `Security`). These are
+thin wiring/composition-root/adapter code, verified by `tests/backend/Integration/<Service>`
+(real Postgres/Redis/Elasticsearch/RabbitMQ via Testcontainers) rather than by line-coverage
+percentage — chasing 95% line coverage on `Program.cs` or a `DbContext` migration produces
+low-value tests, not confidence. Composition-root classes (`Program.cs`, `*ServiceCollectionExtensions.cs`)
+must additionally be marked `[ExcludeFromCodeCoverage]` so they don't silently drag down a
+project's number if it ever does get measured incidentally.
+
+**Enforcement mechanism**: every `Unit` test project (`tests/backend/Unit/<Service>`,
+`tests/backend/Unit/BuildingBlocks`) references `coverlet.msbuild` (not just
+`coverlet.collector` — the MSBuild package is what makes `/p:Threshold` actually fail the
+build, not just report a number). Run:
+
+```
+dotnet test <UnitTestProject> -c Release /p:CollectCoverage=true /p:Threshold=95 /p:ThresholdType=line /p:ThresholdStat=total
+```
+
+This is an **addition** to, not a replacement for, the existing per-stack test commands
+above — run the normal `dotnet test` commands too; this coverage-gated invocation is the
+one that specifically must pass on `{Service}.Domain`/`{Service}.Application` (and the
+BuildingBlocks equivalents) before a PR opens.
+
 ### Local dev environment
 
 `docker compose up -d` at repo root starts PostgreSQL, Elasticsearch, Redis, and RabbitMQ
@@ -257,9 +288,12 @@ Automation uses `feature/{issue-number}-{slug}-phase-{n}` off `dev`.
 - Read this file, `README.md`, and everything under `docs/**/*.md` before drafting a plan.
 - Break work into the smallest set of phases that each produce an independently reviewable
   PR (prefer 100-400 line diffs per phase over one large diff). For a new microservice,
-  typical phasing is: (1) Domain, (2) Application, (3) Infrastructure + Contracts, (4) Api +
-  tests — or combine into fewer phases if the service is small enough to stay within the
-  diff-size guidance.
+  typical phasing is: (1) Domain + its unit tests, (2) Application + its unit tests, (3)
+  Infrastructure + Contracts (+ integration tests), (4) Api — tests for a layer land in the
+  same phase as that layer, not deferred to a final "tests" phase, since Domain/Application
+  each carry their own 95% coverage gate (see "Testing rules") that must pass before that
+  phase's PR merges. Combine into fewer phases if the service is small enough to stay within
+  the diff-size guidance.
 - Surface genuine ambiguity as explicit questions in the plan rather than guessing silently.
 
 ## For the implementation agent (`sdlc-03-develop-phase.yml`)
@@ -273,6 +307,9 @@ Automation uses `feature/{issue-number}-{slug}-phase-{n}` off `dev`.
 - Run the build/test/lint commands above (scoped to what this phase touched), including the
   Architecture fitness tests for any backend change, before pushing; do not open a PR with
   failing checks.
+- If the phase touched a `Domain` or `Application` project (service or BuildingBlocks), also
+  run the coverage-gated command in "Testing rules (code coverage)" and do not open a PR
+  below the 95% threshold — write more unit tests, don't lower the bar.
 
 ## Related docs
 
