@@ -238,12 +238,13 @@ grouping by type makes each category's infrastructure needs obvious (Integration
 ## CI/CD
 
 Independent, path-filtered GitHub Actions workflows so a phase-scoped PR only builds what it
-touched: `ci-dotnet.yml` (paths `src/backend/**`, `src/shared/contracts/dotnet/**`,
-`tests/backend/**` — a change under `src/backend/BuildingBlocks/**` or
-`src/shared/contracts/dotnet/**` must trigger every service's build+test, not just the
-literal changed folder; the Architecture fitness-test project always runs), `ci-python.yml`
-(`src/agents/**`, `tests/agents/**`), `ci-angular.yml` (`src/frontend/web/**`,
-`tests/frontend/**`, using `nx affected` so only touched libs/apps run).
+touched: `ci-dotnet.yml` (paths `edueco/BuildingBlocks/**`, `src/backend/**`,
+`src/shared/contracts/dotnet/**`, `tests/backend/**` — a change under
+`edueco/BuildingBlocks/**` or `src/shared/contracts/dotnet/**` must trigger every service's
+build+test, not just the literal changed folder; the Architecture fitness-test project
+always runs), `ci-python.yml` (`src/agents/**`, `tests/agents/**`), `ci-angular.yml`
+(`src/frontend/web/**`, `tests/frontend/**`, using `nx affected` so only touched libs/apps
+run).
 
 ## Suggested phased rollout
 

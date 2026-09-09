@@ -16,7 +16,7 @@ every service is built on. Full design rationale: `docs/architecture/PLATFORM_AR
 ### Language / stack
 
 - **.NET 10** (C#) — microservices under `src/backend/Services/*`, the API gateway under
-  `src/backend/ApiGateway/`, and shared libraries under `src/backend/BuildingBlocks/*`. Each
+  `src/backend/ApiGateway/`, and shared libraries under `edueco/BuildingBlocks/*`. Each
   microservice follows Clean Architecture (see "Backend microservice layout" below).
 - **Python 3.13** (`uv`, FastAPI) — the multi-agent AI system under `src/agents/`
   (planner/researcher/executor/reviewer roles + shared tools/workflow orchestration).
@@ -36,17 +36,18 @@ every service is built on. Full design rationale: `docs/architecture/PLATFORM_AR
 ### Directory layout
 
 ```
+edueco/
+  BuildingBlocks/            # 7 focused shared libraries — see "BuildingBlocks" below
+    BuildingBlocks.Domain/
+    BuildingBlocks.Application/
+    BuildingBlocks.Infrastructure/     # EF Core + Dapper base conventions only
+    BuildingBlocks.Observability/      # logging/tracing/metrics conventions
+    BuildingBlocks.Messaging/          # MassTransit/RabbitMQ + outbox
+    BuildingBlocks.Caching/            # Redis cache + distributed lock
+    BuildingBlocks.Security/           # shared auth/claims/policy helpers
 src/
   backend/
     ApiGateway/              # YARP reverse proxy — ApiGateway.Api, ApiGateway.Api.Tests live under tests/
-    BuildingBlocks/          # 7 focused shared libraries — see "BuildingBlocks" below
-      BuildingBlocks.Domain/
-      BuildingBlocks.Application/
-      BuildingBlocks.Infrastructure/   # EF Core + Dapper base conventions only
-      BuildingBlocks.Observability/    # logging/tracing/metrics conventions
-      BuildingBlocks.Messaging/        # MassTransit/RabbitMQ + outbox
-      BuildingBlocks.Caching/          # Redis cache + distributed lock
-      BuildingBlocks.Security/         # shared auth/claims/policy helpers
     Services/
       Identity/              # Identity.{Api,Application,Domain,Infrastructure,Contracts}
       Customer/               # placeholder core-domain service — same pattern, rename when the real domain lands
@@ -191,7 +192,7 @@ Auto-migrate (`Database.Migrate()` on startup) only when `ASPNETCORE_ENVIRONMENT
 ### Build / test / lint commands (scoped by what a phase touched)
 
 Run only the block(s) matching the paths this phase changed — do not build/test unrelated
-stacks. **Exception**: a change under `src/backend/BuildingBlocks/**` or
+stacks. **Exception**: a change under `edueco/BuildingBlocks/**` or
 `src/shared/contracts/dotnet/**` must build+test *every* service's `.sln`, since those are
 referenced everywhere.
 
@@ -208,7 +209,7 @@ referenced everywhere.
   - Test: `dotnet test tests/backend/Unit/ApiGateway`
   - Lint: `dotnet format src/backend/ApiGateway/ApiGateway.Api/ApiGateway.Api.csproj --verify-no-changes`
 
-- **Shared BuildingBlocks** (`src/backend/BuildingBlocks/**`) and **Contracts**
+- **Shared BuildingBlocks** (`edueco/BuildingBlocks/**`) and **Contracts**
   (`src/shared/contracts/dotnet/**`): build+test the specific changed `.csproj` via
   `dotnet build|test EduEcosystem.sln -c Release` (the root solution covering all 7
   BuildingBlocks projects + `EduEco.Contracts` + the Architecture fitness-test project),

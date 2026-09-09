@@ -13,13 +13,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Messaging\BuildingBlocks.Messaging.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Caching\BuildingBlocks.Caching.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
-    <ProjectReference Include="..\..\..\src\backend\BuildingBlocks\BuildingBlocks.Security\BuildingBlocks.Security.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Messaging\BuildingBlocks.Messaging.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Caching\BuildingBlocks.Caching.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="..\..\..\edueco\BuildingBlocks\BuildingBlocks.Security\BuildingBlocks.Security.csproj" />
     <ProjectReference Include="..\..\..\src\shared\contracts\dotnet\EduEco.Contracts.csproj" />
   </ItemGroup>
 
