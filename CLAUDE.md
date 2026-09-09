@@ -21,12 +21,12 @@ every service is built on. Full design rationale: `docs/architecture/PLATFORM_AR
 - **Python 3.13** (`uv`, FastAPI) — the multi-agent AI system under `src/agents/`
   (planner/researcher/executor/reviewer roles + shared tools/workflow orchestration).
 - **Angular** (latest, Nx-managed workspace) — frontend under `src/frontend/web/`.
-- **SQL Server** — transactional data, one logical database per microservice (never
+- **PostgreSQL** — transactional data, one logical database per microservice (never
   shared across services). Writes go through EF Core; reads that don't need change-tracking
   or need to be fast go through Dapper (see "Data access: EF Core + Dapper" below).
 - **Elasticsearch** — non-transactional/search/read-model data only. Never the source of
   truth; always populated asynchronously from the transactional side via the outbox
-  pattern (see below). Safe to fully rebuild from SQL Server at any time.
+  pattern (see below). Safe to fully rebuild from PostgreSQL at any time.
 - **Redis** — cache-aside, distributed locks, Identity's token/session blacklist.
 - **RabbitMQ + MassTransit** — inter-service integration events, using MassTransit's
   EF Core transactional outbox (not a hand-rolled poller).
@@ -75,7 +75,7 @@ src/
 tests/
   backend/
     Unit/                    # {Service}.Domain/Application unit tests, one folder per service
-    Integration/             # SQL Server/Redis/Elasticsearch/RabbitMQ-backed tests (Testcontainers)
+    Integration/             # PostgreSQL/Redis/Elasticsearch/RabbitMQ-backed tests (Testcontainers)
     Contract/                # API/event contract tests between services
     Architecture/            # NetArchTest fitness tests enforcing the dependency rules below
   agents/                    # pytest suites for the Python multi-agent system
@@ -119,7 +119,7 @@ Domain/Application):
 - **`{Service}.Application`** — MediatR commands/queries/handlers, FluentValidation
   validators, DTOs, and the *interfaces* Infrastructure implements. Defines ports; never
   references infrastructure packages.
-- **`{Service}.Infrastructure`** — EF Core `DbContext` (SQL Server, command/write side),
+- **`{Service}.Infrastructure`** — EF Core `DbContext` (PostgreSQL, command/write side),
   Dapper-based read repositories (query side), Elasticsearch adapters, MassTransit consumers +
   outbox wiring (via `BuildingBlocks.Messaging`), Redis decorators (via
   `BuildingBlocks.Caching`). The only project allowed to reference infra packages.
@@ -231,8 +231,8 @@ referenced everywhere.
 
 ### Local dev environment
 
-`docker compose up -d` at repo root starts SQL Server, Elasticsearch, Redis, and RabbitMQ
-(ports 1433/9200/6379/5672+15672). Dev-only credentials — see `docker-compose.yml` comments.
+`docker compose up -d` at repo root starts PostgreSQL, Elasticsearch, Redis, and RabbitMQ
+(ports 5432/9200/6379/5672+15672). Dev-only credentials — see `docker-compose.yml` comments.
 `make up`/`make down` wrap the same. The gateway runs containerized or via `dotnet run`;
 Angular runs via `npx nx serve shell` (not containerized in dev, for fast HMR) pointed at the
 gateway's local port.

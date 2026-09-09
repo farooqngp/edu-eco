@@ -16,7 +16,7 @@ application code, and `CLAUDE.md`'s conventions all marked `TBD`. That pipeline 
 approved issue plan into a sequence of small, independently-reviewable PRs, but had nothing
 concrete to build against. This document defines the target platform architecture — a
 polyglot monorepo (.NET microservices + a Python multi-agent AI system behind a YARP
-gateway, Angular frontend, SQL Server + Elasticsearch + Redis) on Clean Architecture per
+gateway, Angular frontend, PostgreSQL + Elasticsearch + Redis) on Clean Architecture per
 backend service — precisely enough to hand to that pipeline as a sequence of phased issues.
 
 ## Locked decisions
@@ -27,7 +27,7 @@ backend service — precisely enough to hand to that pipeline as a sequence of p
   microservices are never called directly by the frontend.
 - Backend: .NET microservices (Clean Architecture, 5 projects each — see below) for core
   domains + a Python multi-agent AI system for LLM-agent work.
-- Databases: **SQL Server** (transactional, database-per-service; EF Core for writes,
+- Databases: **PostgreSQL** (transactional, database-per-service; EF Core for writes,
   Dapper for reads — see "Data access") + Elasticsearch (non-transactional/search/read-model,
   always derived, never source of truth). Cache: Redis. Messaging: RabbitMQ + MassTransit
   (transactional outbox).
@@ -56,7 +56,7 @@ Five projects, one-way dependencies `Api → Infrastructure → Application → 
   and the *interfaces* Infrastructure implements (`IUserRepository`, `IUserReadRepository`,
   `ICacheService`, `ISearchIndex<T>`, `IUnitOfWork`, `ICurrentUser`). Defines ports; never
   references infra packages.
-- **Infrastructure** — EF Core `DbContext` + migrations (SQL Server, command/write side),
+- **Infrastructure** — EF Core `DbContext` + migrations (PostgreSQL, command/write side),
   Dapper read repositories (query side), Elasticsearch adapters, MassTransit consumers +
   outbox wiring (via `BuildingBlocks.Messaging`), Redis decorators (via
   `BuildingBlocks.Caching`). The only project referencing infra packages directly.
@@ -132,14 +132,14 @@ state changes bypass the outbox and silently break the Elasticsearch-sync guaran
 
 ## Database-per-service + Elasticsearch sync
 
-One logical SQL Server database per service (own connection string, own `DbContext`, own
+One logical PostgreSQL database per service (own connection string, own `DbContext`, own
 migrations folder — no service ever holds another service's connection string).
 Elasticsearch is always a derived read-model. Sync mechanism (no dual-write problem): a
 command handler changes an aggregate (via EF Core) → its domain events become integration
 events written to an outbox row **in the same DB transaction** as the entity change →
 MassTransit's transactional outbox delivers them to RabbitMQ at-least-once → an idempotent
 consumer (upsert by aggregate ID) projects the event into the corresponding ES index. ES
-documents are always rebuildable from SQL Server.
+documents are always rebuildable from PostgreSQL.
 
 ## Redis usage
 
@@ -218,7 +218,7 @@ from the real API.
 `tests/` is top-level, grouped by test type rather than colocated per project:
 
 - **`tests/backend/Unit/<Service>`** — Domain/Application logic in isolation, no real infra.
-- **`tests/backend/Integration/<Service>`** — real SQL Server/Redis/Elasticsearch/RabbitMQ
+- **`tests/backend/Integration/<Service>`** — real PostgreSQL/Redis/Elasticsearch/RabbitMQ
   via Testcontainers; exercises the actual `Infrastructure` implementations.
 - **`tests/backend/Contract`** — API/event contract tests between services (e.g. a
   published integration event's schema matches what `EduEco.Contracts` declares).
