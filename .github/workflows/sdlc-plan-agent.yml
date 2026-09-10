@@ -115,6 +115,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           base_branch: dev
           prompt: ${{ steps.render.outputs.prompt }}
+          # TEMPORARY: claude.run now succeeds (auth fixed) but 8 tool calls were denied
+          # and no plan comment ever posted — diagnosing what got blocked.
+          show_full_output: true
           claude_args: |
             --allowedTools "Bash(gh issue comment:*),Bash(gh api:*),Read,Grep,Glob"
 
