@@ -115,8 +115,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           base_branch: dev
           prompt: ${{ steps.render.outputs.prompt }}
-          # TEMPORARY: re-checking after an API key update — still failing identically.
-          show_full_output: true
           claude_args: |
             --allowedTools "Bash(gh issue comment:*),Bash(gh api:*),Read,Grep,Glob"
 
