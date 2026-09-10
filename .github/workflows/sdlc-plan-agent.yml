@@ -115,6 +115,10 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           base_branch: dev
           prompt: ${{ steps.render.outputs.prompt }}
+          # TEMPORARY: diagnosing a reproducible is_error:true/$0-cost/1-turn failure that
+          # gives no visible detail otherwise. Revert once the root cause is found — this
+          # can print raw model/API output to logs.
+          show_full_output: true
           claude_args: |
             --allowedTools "Bash(gh issue comment:*),Bash(gh api:*),Read,Grep,Glob"
 
