@@ -131,7 +131,11 @@ jobs:
           fi
 
       - name: Mark planning failed
-        if: steps.claude.outputs.conclusion != 'success'
+        # always() is required here: GitHub Actions skips every later step by default once
+        # one step fails, regardless of a plain `if:` condition — without always(), this
+        # step never runs after a real claude.run failure, leaving the issue stuck on
+        # sdlc:planning with no failure comment and no sdlc:planning-failed label.
+        if: always() && steps.claude.outputs.conclusion != 'success'
         env:
           ISSUE_ASSIGNEE: ${{ steps.issue.outputs.assignee }}
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}

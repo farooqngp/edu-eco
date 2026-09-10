@@ -12,7 +12,7 @@ jobs:
   plan:
     if: >
       (github.event.action == 'assigned' && github.event.issue.assignee != null) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'sdlc:planning')
+      (github.event.action == 'labeled' && github.event.label.name == 'sdlc:planning' && github.event.sender.type != 'Bot')
     uses: ./.github/workflows/sdlc-plan-agent.yml
     with:
       issue_number: ${{ github.event.issue.number }}
