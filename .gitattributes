@@ -1,0 +1,26 @@
+###############################################################################
+# Set default behavior to automatically normalize line endings.
+###############################################################################
+* text=auto
+
+###############################################################################
+# Set default behavior for command prompt diff.
+###############################################################################
+*.cs     text diff=csharp
+*.csproj text
+*.sln    text eol=crlf
+*.slnx   text eol=lf
+*.props  text
+*.targets text
+*.json   text
+*.md     text
+*.yml    text
+*.yaml   text
+
+###############################################################################
+# Denote binary files
+###############################################################################
+*.png binary
+*.jpg binary
+*.dll binary
+*.exe binary
