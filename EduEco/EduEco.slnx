@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/Database/">
+    <Project Path="EduEco.Database/EduEco.Database.csproj" />
+  </Folder>
+  <Folder Name="/Libraries/">
+    <Project Path="Application/Application.csproj" />
+    <Project Path="Core/Core.csproj" />
+    <Project Path="Infrastructure/Infrastructure.csproj" />
+    <Project Path="ServiceRegistry/ServiceRegistry.csproj" />
+  </Folder>
+  <Folder Name="/Presentation/">
+    <Project Path="EduEco.Api/EduEco.Api.csproj" />
+    <Project Path="EduEco.Identity/EduEco.Identity.csproj" />
+  </Folder>
+  <Folder Name="/Test/" />
+</Solution>
