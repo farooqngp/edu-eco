@@ -1,0 +1,6 @@
+@EduEco.Identity_HostAddress = http://localhost:5075
+
+GET {{EduEco.Identity_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
