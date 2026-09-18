@@ -41,9 +41,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.12" />
   </ItemGroup>
   <ItemGroup Label="Identity">
-    <PackageVersion Include="OpenIddict.Core" Version="7.7.0" />
-    <PackageVersion Include="OpenIddict.EntityFrameworkCore" Version="7.7.0" />
-    <PackageVersion Include="OpenIddict.Server.AspNetCore" Version="7.7.0" />
+    <PackageVersion Include="OpenIddict.Core" Version="7.7.1" />
+    <PackageVersion Include="OpenIddict.EntityFrameworkCore" Version="7.7.1" />
+    <PackageVersion Include="OpenIddict.Server.AspNetCore" Version="7.7.1" />
   </ItemGroup>
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
