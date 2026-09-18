@@ -1,0 +1,45 @@
+@page
+@model EduEco.Identity.Pages.Account.Manage.TwoFactorModel
+@{
+    ViewData["Title"] = "Authenticator app";
+}
+
+<h1>Authenticator app</h1>
+
+@if (Model.StatusMessage is not null)
+{
+    <p class="status">@Model.StatusMessage</p>
+}
+
+@if (Model.RecoveryCodes is { Length: > 0 })
+{
+    <h2>Recovery codes</h2>
+    <p>Store these codes somewhere safe. Each can be used once if you lose your authenticator. They will not be shown again.</p>
+    <code class="secret">@string.Join(" ", Model.RecoveryCodes)</code>
+    <a class="button" asp-page="./Index">Done</a>
+}
+else if (Model.IsEnabled)
+{
+    <p>Two-factor authentication is enabled. Recovery codes left: <strong>@Model.RecoveryCodesLeft</strong>.</p>
+    <form method="post" asp-page-handler="Disable">
+        <button type="submit" class="danger">Disable two-factor authentication</button>
+    </form>
+}
+else
+{
+    <ol>
+        <li>Add a new account in your authenticator app (Microsoft Authenticator, Google Authenticator, 1Password …).</li>
+        <li>Enter this key, or open the setup link on the device with the app:
+            <code class="secret">@Model.SharedKey</code>
+            <a href="@Model.AuthenticatorUri">Open in authenticator app</a>
+        </li>
+        <li>Enter the 6-digit code the app shows.</li>
+    </ol>
+
+    <form method="post" asp-page-handler="Enable" novalidate>
+        <div asp-validation-summary="ModelOnly" class="error"></div>
+        <label for="code">Verification code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+        <button type="submit">Enable</button>
+    </form>
+}

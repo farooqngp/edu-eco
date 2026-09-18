@@ -1,6 +1,26 @@
-@EduEco.Api_HostAddress = http://localhost:5190
+@api = https://localhost:7037
+@identity = https://localhost:7013
+# private_key_jwt: paste a fresh one-time assertion from  pwsh tools/New-ClientAssertion.ps1 -ClientId eduEco-svc-dev
+@svcAssertion = <CLIENT_ASSERTION>
 
-GET {{EduEco.Api_HostAddress}}/weatherforecast/
-Accept: application/json
+### 1. Service token (client_credentials, bound to tenant demo-school)
+# @name token
+POST {{identity}}/connect/token
+Content-Type: application/x-www-form-urlencoded
 
-###
+grant_type=client_credentials&client_id=eduEco-svc-dev&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion={{svcAssertion}}&scope=api.read
+
+### 2. Who am I (effective permissions)
+GET {{api}}/api/v1/me
+Authorization: Bearer {{token.response.body.access_token}}
+
+### 3. Current tenant (tenants.read; allowed for service clients)
+GET {{api}}/api/v1/tenants/current
+Authorization: Bearer {{token.response.body.access_token}}
+
+### 4. Memberships (users.manage; end-user token required → 403 for service clients)
+GET {{api}}/api/v1/memberships
+Authorization: Bearer {{token.response.body.access_token}}
+
+### 5. No token → 401 problem details
+GET {{api}}/api/v1/me

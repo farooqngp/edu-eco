@@ -1,0 +1,109 @@
+# Production database change process (see EduEco/EduEco.Database/README.md, "Production runbook").
+#
+#   plan   -> dry run + --script-out against the target database, uploaded for DBA review (no changes made).
+#   apply  -> runs the SAME migrator image after approval on the protected GitHub environment.
+#
+# Required repository setup (Settings > Environments):
+#   <env>-plan  secret MIGRATOR_CONNECTION_STRING  (login with VIEW DEFINITION + SELECT on migration.SchemaVersions is enough)
+#   <env>       secret MIGRATOR_CONNECTION_STRING  (DDL login: db_ddladmin + db_datareader/db_datawriter)
+#               protection rule "Required reviewers" (DBA + release owner); optional wait timer.
+# Apps never migrate at startup; application logins have no DDL rights.
+name: Database migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      image-tag:
+        description: db-migrator image tag (full commit SHA built by CI)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-migrate-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/edueco-db-migrator:sha-${{ inputs.image-tag }}
+
+jobs:
+  plan:
+    name: Plan (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}-plan
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY"
+
+      - name: Pending scripts (dry run)
+        env:
+          ConnectionStrings__EduEco: ${{ secrets.MIGRATOR_CONNECTION_STRING }}
+        run: |
+          mkdir -p out
+          docker run --rm -e ConnectionStrings__EduEco -e DOTNET_ENVIRONMENT=Production "$IMAGE" \
+            migrate --dry-run | tee out/pending.txt
+          # Run as the runner user so the non-root image can write into the mounted folder.
+          docker run --rm --user "$(id -u):$(id -g)" -e ConnectionStrings__EduEco -e DOTNET_ENVIRONMENT=Production \
+            -v "$PWD/out:/out" "$IMAGE" migrate --script-out /out/pending.sql
+          {
+            echo "### Pending scripts for ${{ inputs.environment }}"
+            echo '```'
+            grep -E "pending" out/pending.txt || echo "none"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-plan-${{ inputs.environment }}
+          path: out/
+          retention-days: 90
+
+  apply:
+    name: Apply (${{ inputs.environment }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Blocks here until the environment's required reviewers approve the reviewed plan.
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pre-flight checklist
+        run: |
+          {
+            echo "### Before approving, confirm"
+            echo "- Backup / point-in-time restore checkpoint taken"
+            echo "- migration-plan-${{ inputs.environment }} reviewed (expand/contract, no destructive DDL)"
+            echo "- Application release that needs this schema is ready"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Migrate
+        env:
+          ConnectionStrings__EduEco: ${{ secrets.MIGRATOR_CONNECTION_STRING }}
+        run: docker run --rm -e ConnectionStrings__EduEco -e DOTNET_ENVIRONMENT=Production "$IMAGE" migrate

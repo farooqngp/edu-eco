@@ -2,6 +2,7 @@
   <Folder Name="/Database/">
     <Project Path="EduEco.Database/EduEco.Database.csproj" />
   </Folder>
+  <Folder Name="/Documents/" />
   <Folder Name="/Libraries/">
     <Project Path="Application/Application.csproj" />
     <Project Path="Core/Core.csproj" />
@@ -10,7 +11,24 @@
   </Folder>
   <Folder Name="/Presentation/">
     <Project Path="EduEco.Api/EduEco.Api.csproj" />
+    <Project Path="EduEco.Bff/EduEco.Bff.csproj" />
     <Project Path="EduEco.Identity/EduEco.Identity.csproj" />
   </Folder>
-  <Folder Name="/Test/" />
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="../docker-compose.yml" />
+    <File Path="global.json" />
+    <File Path="nuget.config" />
+  </Folder>
+  <Folder Name="/Tools/">
+    <Project Path="Tools/EduEco.AuthE2E/EduEco.AuthE2E.csproj" />
+  </Folder>
+  <Folder Name="/Test/">
+    <Project Path="Test/EduEco.Api.IntegrationTests/EduEco.Api.IntegrationTests.csproj" />
+    <Project Path="Test/EduEco.Bff.IntegrationTests/EduEco.Bff.IntegrationTests.csproj" />
+    <Project Path="Test/EduEco.Database.Tests/EduEco.Database.Tests.csproj" />
+    <Project Path="Test/EduEco.Identity.IntegrationTests/EduEco.Identity.IntegrationTests.csproj" />
+    <Project Path="Test/EduEco.Infrastructure.IntegrationTests/EduEco.Infrastructure.IntegrationTests.csproj" />
+  </Folder>
 </Solution>

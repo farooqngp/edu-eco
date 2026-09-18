@@ -1,6 +1,31 @@
-@EduEco.Identity_HostAddress = http://localhost:5075
+@identity = https://localhost:7013
+# Dev service client (seeded by EduEco.Database --seed-clients) authenticates with private_key_jwt.
+# Assertions are single-use (60 s): create one per request with  pwsh tools/New-ClientAssertion.ps1 -ClientId eduEco-svc-dev
+@svcClientId = eduEco-svc-dev
+@assertionType = urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+@svcAssertion = <CLIENT_ASSERTION>
+@svcAssertion2 = <ANOTHER_CLIENT_ASSERTION>
 
-GET {{EduEco.Identity_HostAddress}}/weatherforecast/
-Accept: application/json
+### OpenID Connect discovery
+GET {{identity}}/.well-known/openid-configuration
 
-###
+### JSON Web Key Set (public signing keys)
+GET {{identity}}/.well-known/jwks
+
+### Client credentials (service-to-service)
+# @name svcToken
+POST {{identity}}/connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id={{svcClientId}}&client_assertion_type={{assertionType}}&client_assertion={{svcAssertion}}&scope=api.read
+
+### Token revocation
+POST {{identity}}/connect/revoke
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{svcClientId}}&client_assertion_type={{assertionType}}&client_assertion={{svcAssertion2}}&token={{svcToken.response.body.access_token}}
+
+### Interactive (browser): authorization code + PKCE with the public docs client
+# eduEco-bff requires PAR + private_key_jwt; sign in through https://localhost:7100/bff/login instead.
+# Open in a browser; code_challenge = BASE64URL(SHA256(code_verifier)).
+# {{identity}}/connect/authorize?client_id=eduEco-api-docs&response_type=code&scope=openid%20api.read&redirect_uri=https%3A%2F%2Flocalhost%3A7037%2Fscalar&code_challenge=<challenge>&code_challenge_method=S256&state=<state>

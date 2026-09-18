@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Restore audit (known vulnerable packages) fails the build. Sources/mapping: see nuget.config. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <!-- Library projects (Core, Application, ...) get an EduEco.* namespace/assembly name. -->
+  <PropertyGroup Condition="!$(MSBuildProjectName.StartsWith('EduEco.'))">
+    <RootNamespace>EduEco.$(MSBuildProjectName)</RootNamespace>
+    <AssemblyName>EduEco.$(MSBuildProjectName)</AssemblyName>
+  </PropertyGroup>
+</Project>

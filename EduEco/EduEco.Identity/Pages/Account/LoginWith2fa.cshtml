@@ -1,0 +1,17 @@
+@page
+@model EduEco.Identity.Pages.Account.LoginWith2faModel
+@{
+    ViewData["Title"] = "Two-factor authentication";
+}
+
+<h1>Two-factor authentication</h1>
+<p>Enter the 6-digit code from your authenticator app.</p>
+
+<form method="post" asp-route-returnUrl="@Model.ReturnUrl" novalidate>
+    <div asp-validation-summary="ModelOnly" class="error"></div>
+    <label for="code">Authenticator code</label>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" autofocus />
+    <button type="submit">Verify</button>
+</form>
+
+<p><a asp-page="./LoginWithRecoveryCode" asp-route-returnUrl="@Model.ReturnUrl">Use a recovery code</a></p>

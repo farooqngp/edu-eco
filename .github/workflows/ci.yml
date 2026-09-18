@@ -1,0 +1,226 @@
+# Build, test, dependency audit, migration script review and container images.
+# Third-party actions are pinned to full commit SHAs (tag in the trailing comment); Dependabot keeps them current.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Build and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: EduEco
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: EduEco/global.json
+
+      # nuget.config restricts restore to nuget.org; NuGetAudit (all/low) + TreatWarningsAsErrors fail on known CVEs.
+      - name: Restore
+        run: dotnet restore EduEco.slnx
+
+      - name: Build (warnings as errors)
+        run: dotnet build EduEco.slnx -c "$CONFIGURATION" --no-restore
+
+      - name: Vulnerable package report
+        run: |
+          dotnet list EduEco.slnx package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable NuGet packages found (see log)."
+            exit 1
+          fi
+
+      - name: Deprecated package report (informational)
+        run: dotnet list EduEco.slnx package --deprecated --include-transitive
+
+  test:
+    name: Test (${{ matrix.project }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Integration suites start their own SQL Server / Redis containers (Testcontainers; Docker is preinstalled).
+        project:
+          - EduEco.Database.Tests
+          - EduEco.Infrastructure.IntegrationTests
+          - EduEco.Identity.IntegrationTests
+          - EduEco.Api.IntegrationTests
+          - EduEco.Bff.IntegrationTests
+    defaults:
+      run:
+        working-directory: EduEco
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: EduEco/global.json
+
+      - name: Test
+        run: >
+          dotnet test --project "Test/${{ matrix.project }}" -c "$CONFIGURATION"
+          --results-directory "$GITHUB_WORKSPACE/TestResults"
+          --report-xunit-trx --report-xunit-trx-filename "${{ matrix.project }}.trx"
+          --report-xunit-markdown --report-xunit-markdown-filename "${{ matrix.project }}.md"
+
+      - name: Test summary
+        if: always()
+        run: cat "$GITHUB_WORKSPACE/TestResults/${{ matrix.project }}.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: test-results-${{ matrix.project }}
+          path: TestResults/
+          retention-days: 14
+
+  migration-script:
+    name: Migration script review
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: Ci-Only-Passw0rd!
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Ci-Only-Passw0rd!' -C -Q 'SELECT 1' -b"
+          --health-interval 10s --health-timeout 5s --health-retries 12 --health-start-period 20s
+    env:
+      # Throwaway service container on the runner; not a secret.
+      ConnectionStrings__EduEco: "Server=localhost,1433;Database=EduEco;User Id=sa;Password=Ci-Only-Passw0rd!;Encrypt=True;TrustServerCertificate=True"
+      DOTNET_ENVIRONMENT: CI
+    defaults:
+      run:
+        working-directory: EduEco
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: EduEco/global.json
+
+      - name: Build migrator
+        run: dotnet build EduEco.Database -c "$CONFIGURATION"
+
+      # Full script from an empty database: the reviewable artefact for DBAs (--script-out never executes anything).
+      - name: Generate migration script
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          dotnet run --project EduEco.Database -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate --ensure-db --script-out "$GITHUB_WORKSPACE/artifacts/migration.sql"
+
+      - name: Apply to empty database
+        run: dotnet run --project EduEco.Database -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate --ensure-db
+
+      - name: Re-run is a no-op (idempotency)
+        run: |
+          dotnet run --project EduEco.Database -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate --dry-run | tee dry-run.txt
+          if grep -qiE "V[0-9]{4}__" dry-run.txt; then
+            echo "::error::Journaled scripts are pending after a full migration."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-script
+          path: artifacts/migration.sql
+          retention-days: 30
+
+  images:
+    name: Image (${{ matrix.image.name }})
+    needs: [test, migration-script]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write        # push to GHCR
+      id-token: write        # keyless provenance signing
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: identity, dockerfile: EduEco.Identity/Dockerfile }
+          - { name: api, dockerfile: EduEco.Api/Dockerfile }
+          - { name: bff, dockerfile: EduEco.Bff/Dockerfile }
+          - { name: db-migrator, dockerfile: EduEco.Database/Dockerfile }
+    env:
+      # Pull requests only prove the image builds; pushes to main/dev publish it.
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/edueco-${{ matrix.image.name }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: EduEco
+          file: EduEco/${{ matrix.image.dockerfile }}
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: ${{ env.PUSH == 'true' }}
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.PUSH == 'true'
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/edueco-${{ matrix.image.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

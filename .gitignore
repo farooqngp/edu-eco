@@ -427,3 +427,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Local development certificates (tools/New-DevCertificates.ps1)
+certs/
