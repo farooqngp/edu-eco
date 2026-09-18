@@ -65,6 +65,9 @@ public sealed class MembershipsController(
 
     [HttpPost]
     [RequireActiveToken]
+    // Bearer-only API (no cookie auth, see ApiSetup.AddAuthentication): a browser cannot attach the
+    // Authorization header automatically, so CSRF forgery isn't possible here.
+    [IgnoreAntiforgeryToken]
     [ProducesResponseType<MembershipResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]

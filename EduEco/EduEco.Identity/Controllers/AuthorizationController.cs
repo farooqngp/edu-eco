@@ -309,7 +309,7 @@ public sealed class AuthorizationController(
             }
         }
 
-        return Redirect("/Account/Logout" + Request.QueryString);
+        return LocalRedirect("/Account/Logout" + Request.QueryString);
     }
 
     [HttpPost("~/connect/endsession")]
