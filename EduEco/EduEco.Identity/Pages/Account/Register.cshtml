@@ -1,0 +1,33 @@
+@page
+@model EduEco.Identity.Pages.Account.RegisterModel
+@{
+    ViewData["Title"] = "Create account";
+}
+
+<h1>Create an account</h1>
+
+@if (Model.Submitted)
+{
+    <p class="status">
+        Check your email to confirm your address. If an account already exists for this address, use
+        <a asp-page="./ForgotPassword">Forgot your password?</a> instead.
+    </p>
+    <p>After confirming, ask your school administrator to grant you access before signing in to EduEco applications.</p>
+}
+else
+{
+    <form method="post" novalidate>
+        <div asp-validation-summary="All" class="error"></div>
+        <label asp-for="Input.Email">Email</label>
+        <input asp-for="Input.Email" type="email" autocomplete="username" autofocus />
+        <label asp-for="Input.DisplayName"></label>
+        <input asp-for="Input.DisplayName" autocomplete="name" />
+        <label asp-for="Input.Password">Password (at least 12 characters)</label>
+        <input asp-for="Input.Password" autocomplete="new-password" />
+        <label asp-for="Input.ConfirmPassword"></label>
+        <input asp-for="Input.ConfirmPassword" autocomplete="new-password" />
+        <button type="submit">Create account</button>
+    </form>
+}
+
+<p><a asp-page="./Login">Back to sign in</a></p>

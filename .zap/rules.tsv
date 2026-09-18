@@ -1,0 +1,10 @@
+# OWASP ZAP baseline rule overrides (tab separated: id, action, reason). Unlisted alerts fail the scan workflow.
+10035	IGNORE	(HSTS: enabled outside Development via UseHsts; browsers ignore HSTS for localhost scan targets)
+10049	IGNORE	(Non-storable content: informational; authenticated/protocol responses are intentionally no-store)
+10015	IGNORE	(Re-examine cache-control: informational; sensitive pages send no-cache, no-store; SPA shell no-cache)
+10094	IGNORE	(Base64 disclosure: Data Protection antiforgery tokens and static asset hashes, encrypted/non-sensitive)
+10031	IGNORE	(User-controllable attribute: Razor HTML-encodes the reflected e-mail value; no script context)
+10109	IGNORE	(Modern web application: informational)
+10111	IGNORE	(Authentication request identified: informational)
+10112	IGNORE	(Session management response identified: informational)
+90005	IGNORE	(Sec-Fetch-* request headers: property of the scanner's own requests, informational)

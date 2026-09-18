@@ -1,0 +1,15 @@
+@page
+@model EduEco.Identity.Pages.Account.LoginWithRecoveryCodeModel
+@{
+    ViewData["Title"] = "Recovery code";
+}
+
+<h1>Sign in with a recovery code</h1>
+<p>Each recovery code can be used once.</p>
+
+<form method="post" asp-route-returnUrl="@Model.ReturnUrl" novalidate>
+    <div asp-validation-summary="ModelOnly" class="error"></div>
+    <label for="recoveryCode">Recovery code</label>
+    <input id="recoveryCode" name="recoveryCode" type="text" autocomplete="off" autofocus />
+    <button type="submit">Sign in</button>
+</form>

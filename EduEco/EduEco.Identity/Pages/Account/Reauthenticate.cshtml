@@ -1,0 +1,15 @@
+@page
+@model EduEco.Identity.Pages.Account.ReauthenticateModel
+@{
+    ViewData["Title"] = "Confirm it's you";
+}
+
+<h1>Confirm it's you</h1>
+<p>Security settings require a recent sign-in. Enter your password to continue.</p>
+
+<form method="post" asp-route-returnUrl="@Model.ReturnUrl" novalidate>
+    <div asp-validation-summary="ModelOnly" class="error"></div>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" autofocus />
+    <button type="submit">Continue</button>
+</form>

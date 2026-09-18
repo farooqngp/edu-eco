@@ -1,0 +1,9 @@
+{
+  "01_Migrations/V0001__create_schemas.sql": "4ad3329d4f4c7bad4978b19825f83875a842e75c9422db067cdd10aa44dd26b6",
+  "01_Migrations/V0002__auth_identity_tables.sql": "0a39ecea4835d11cf12badf0df43eeab5c96126c0a088205840d310422f6a664",
+  "01_Migrations/V0003__auth_openiddict_tables.sql": "464f01c5f47017b85c0c8f5037dadca09f5aaa5a9fe87d3f7a556284b291f8d3",
+  "01_Migrations/V0004__tenants.sql": "7284257710de77ce32d21a900db4a57aefd35624e937be6f5fea4c7b00b2aa52",
+  "01_Migrations/V0005__permissions_memberships.sql": "f8acacd9e77fcfbad7b0b451246a3d9be41eca49b91266658df0fb0652f0d1ef",
+  "01_Migrations/V0006__auth_user_passkeys.sql": "1d2ec21626c2859e2406cd4d5ed8f081b9a4ea5a5b559c1a91704a8e17aec522",
+  "01_Migrations/V0007__bff_sessions.sql": "a00aa58b419a595fc1d77dc032f037fc33116e7a54f5fa09a1b97fb82eabee6e"
+}

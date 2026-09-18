@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EduEco</title>
+    <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+    <header>
+        <h1>EduEco</h1>
+        <div id="session"></div>
+    </header>
+
+    <main>
+        <p id="notice" class="notice" hidden>Sign-in failed or was cancelled.</p>
+
+        <section>
+            <h2>Session</h2>
+            <button id="login" type="button">Sign in</button>
+            <button id="logout" type="button" hidden>Sign out</button>
+            <pre id="user">Not signed in.</pre>
+        </section>
+
+        <section>
+            <h2>API through the BFF</h2>
+            <p>Calls go to <code>/api/**</code> on this origin. The browser never sees a token.</p>
+            <button type="button" data-api="/api/v1/me">GET /api/v1/me</button>
+            <button type="button" data-api="/api/v1/tenants/current">GET /api/v1/tenants/current</button>
+            <button type="button" data-api="/api/v1/memberships">GET /api/v1/memberships</button>
+            <pre id="api">—</pre>
+        </section>
+    </main>
+
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /EduEco
+    schedule:
+      interval: weekly
+    groups:
+      microsoft:
+        patterns: ["Microsoft.*", "System.*"]
+      openiddict:
+        patterns: ["OpenIddict.*"]
+      azure:
+        patterns: ["Azure.*"]
+      testing:
+        patterns: ["xunit*", "Testcontainers*", "Shouldly", "Microsoft.NET.Test.Sdk"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directories:
+      - /EduEco/EduEco.Api
+      - /EduEco/EduEco.Bff
+      - /EduEco/EduEco.Identity
+      - /EduEco/EduEco.Database
+    schedule:
+      interval: weekly

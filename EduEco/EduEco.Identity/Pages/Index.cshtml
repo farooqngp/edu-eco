@@ -1,0 +1,17 @@
+@page
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+@{
+    ViewData["Title"] = "EduEco Identity";
+}
+
+<h1>EduEco Identity</h1>
+@if (User.Identity?.IsAuthenticated == true)
+{
+    <p>You are signed in.</p>
+    <a class="button" asp-page="/Account/Manage/Index">Manage security</a>
+}
+else
+{
+    <p>Sign in from an EduEco application, or sign in here to manage your security settings.</p>
+    <a class="button" asp-page="/Account/Login" asp-route-returnUrl="/Account/Manage">Sign in</a>
+}

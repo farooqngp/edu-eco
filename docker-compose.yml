@@ -1,0 +1,174 @@
+name: eduEco
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
+    ports:
+      - "${SQL_PORT:-14333}:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Scale-out state: HybridCache L2, permission-cache invalidation (pub/sub), DPoP / client assertion / logout jti replay cache.
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Development SMTP sink for password reset / email confirmation. Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+
+  # One-off job: applies DbUp scripts, then seeds OAuth clients and dev users. Re-run safely (idempotent).
+  db-migrator:
+    build:
+      context: ./EduEco
+      dockerfile: EduEco.Database/Dockerfile
+    command: ["migrate", "--ensure-db", "--seed-clients", "--seed-dev-users"]
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__EduEco: "Server=sqlserver,1433;Database=EduEco;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True"
+      # private_key_jwt: only the public certificates are mounted into the migrator.
+      Seed__Clients__eduEco-bff__PublicKeyCertificatePath: /certs/bff-client.cer
+      Seed__Clients__eduEco-api__PublicKeyCertificatePath: /certs/api-client.cer
+      Seed__Clients__eduEco-svc-dev__PublicKeyCertificatePath: /certs/svc-dev-client.cer
+      Seed__DevUsers__Password: ${DEV_USER_PASSWORD:?Set DEV_USER_PASSWORD in .env}
+    volumes:
+      - ./certs/bff-client.cer:/certs/bff-client.cer:ro
+      - ./certs/api-client.cer:/certs/api-client.cer:ro
+      - ./certs/svc-dev-client.cer:/certs/svc-dev-client.cer:ro
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+
+  # OpenID Connect authorization server. Certificates: pwsh ./tools/New-DevCertificates.ps1 (writes ./certs).
+  # Listens on 7013 inside the container too, so the issuer https://localhost:7013/ is identical for the browser (host)
+  # and for the api container (which shares this network namespace).
+  identity:
+    build:
+      context: ./EduEco
+      dockerfile: EduEco.Identity/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: ""
+      ASPNETCORE_HTTPS_PORTS: "7013"
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /certs/aspnetcore-https.pfx
+      ASPNETCORE_Kestrel__Certificates__Default__Password: ${IDENTITY_CERT_PASSWORD:?Set IDENTITY_CERT_PASSWORD in .env}
+      ConnectionStrings__EduEco: "Server=sqlserver,1433;Database=EduEco;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True"
+      IdentityServer__Issuer: https://localhost:7013/
+      IdentityServer__CredentialMode: Certificate
+      IdentityServer__SigningCertificates__0__Path: /certs/identity-signing.pfx
+      IdentityServer__SigningCertificates__0__Password: ${IDENTITY_CERT_PASSWORD}
+      IdentityServer__EncryptionCertificates__0__Path: /certs/identity-encryption.pfx
+      IdentityServer__EncryptionCertificates__0__Password: ${IDENTITY_CERT_PASSWORD}
+      IdentityServer__DataProtectionKeysPath: /keys
+      # Back-channel logout to the BFF over its self-signed dev certificate (Development-only switch).
+      IdentityServer__AllowUntrustedBackchannelLogoutCertificates: "true"
+      # CSP form-action: relying-party origins reached by redirects after login/consent/logout form posts.
+      IdentityServer__FormActionOrigins__0: https://localhost:7100
+      IdentityServer__FormActionOrigins__1: https://localhost:7037
+      IdentityServer__AllowSelfRegistration: "true"
+      # Local testing (browser + tools/E2E) exceeds the production default of 10 login-type POSTs per minute per IP.
+      IdentityServer__RateLimits__LoginPermitsPerMinute: "60"
+      ConnectionStrings__Redis: redis:6379
+      Email__Smtp__Host: mailpit
+      Email__Smtp__Port: "1025"
+      Email__Smtp__Security: None
+      Email__Smtp__FromAddress: no-reply@eduEco.local
+      Email__Smtp__FromName: EduEco (Development)
+    ports:
+      - "7013:7013"   # identity
+      - "7037:7037"   # api (shares this network namespace)
+      - "7100:7100"   # bff (shares this network namespace)
+    volumes:
+      - ./certs:/certs:ro
+      - identity-keys:/keys
+    depends_on:
+      db-migrator:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # Resource server. network_mode lets it reach the issuer at https://localhost:7013 (local Docker only;
+  # in real deployments the issuer is a public/internal DNS name reachable by both).
+  api:
+    build:
+      context: ./EduEco
+      dockerfile: EduEco.Api/Dockerfile
+    network_mode: "service:identity"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: ""
+      ASPNETCORE_HTTPS_PORTS: "7037"
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /certs/aspnetcore-https.pfx
+      ASPNETCORE_Kestrel__Certificates__Default__Password: ${IDENTITY_CERT_PASSWORD}
+      ConnectionStrings__EduEco: "Server=sqlserver,1433;Database=EduEco;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True"
+      Authentication__Authority: https://localhost:7013/
+      ConnectionStrings__Redis: redis:6379
+      # [RequireActiveToken] endpoints introspect with private_key_jwt (client eduEco-api).
+      Authentication__Introspection__Enabled: "true"
+      Authentication__Introspection__CertificatePath: /certs/api-client.pfx
+      Authentication__Introspection__CertificatePassword: ${IDENTITY_CERT_PASSWORD}
+      # The container OS does not trust the host's ASP.NET dev certificate (Development-only switch, refused elsewhere).
+      Authentication__AllowUntrustedBackchannelCertificate: "true"
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      identity:
+        condition: service_started
+
+  # Backend-for-Frontend: serves the SPA, keeps tokens server-side, proxies /api/** with the user's access token.
+  bff:
+    build:
+      context: ./EduEco
+      dockerfile: EduEco.Bff/Dockerfile
+    network_mode: "service:identity"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: ""
+      ASPNETCORE_HTTPS_PORTS: "7100"
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /certs/aspnetcore-https.pfx
+      ASPNETCORE_Kestrel__Certificates__Default__Password: ${IDENTITY_CERT_PASSWORD}
+      ConnectionStrings__EduEco: "Server=sqlserver,1433;Database=EduEco;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True"
+      Bff__Authority: https://localhost:7013/
+      Bff__ApiBaseAddress: https://localhost:7037/
+      Bff__ClientId: eduEco-bff
+      # private_key_jwt (no client secret) + PAR; back-channel logout arrives at /bff/backchannel-logout.
+      Bff__ClientAssertion__CertificatePath: /certs/bff-client.pfx
+      Bff__ClientAssertion__CertificatePassword: ${IDENTITY_CERT_PASSWORD}
+      ConnectionStrings__Redis: redis:6379
+      Bff__DataProtectionKeysPath: /keys
+      # Container OS does not trust the host's ASP.NET dev certificate (Development-only switch, refused elsewhere).
+      Bff__AllowUntrustedCertificates: "true"
+    volumes:
+      - ./certs:/certs:ro
+      - bff-keys:/keys
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  sqlserver-data:
+  identity-keys:
+  bff-keys:

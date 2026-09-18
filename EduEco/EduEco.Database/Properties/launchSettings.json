@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "migrate (Development)": {
+      "commandName": "Project",
+      "commandLineArgs": "migrate --ensure-db --seed-clients --seed-dev-users",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    },
+    "dry-run (Development)": {
+      "commandName": "Project",
+      "commandLineArgs": "--dry-run",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

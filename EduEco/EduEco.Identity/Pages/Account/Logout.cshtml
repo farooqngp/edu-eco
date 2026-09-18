@@ -1,0 +1,17 @@
+@page
+@model EduEco.Identity.Pages.Account.LogoutModel
+@{
+    ViewData["Title"] = "Sign out";
+}
+
+<h1>Sign out</h1>
+<p>Do you want to sign out of EduEco?</p>
+
+@* Confirmation step prevents cross-site logout (CSRF); parameters are replayed to the end-session endpoint. *@
+<form method="post" action="/connect/endsession" asp-antiforgery="true">
+    @foreach (var parameter in Model.Parameters)
+    {
+        <input type="hidden" name="@parameter.Key" value="@parameter.Value" />
+    }
+    <button type="submit">Sign out</button>
+</form>

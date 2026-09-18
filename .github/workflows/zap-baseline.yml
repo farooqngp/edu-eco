@@ -1,0 +1,95 @@
+# OWASP ZAP baseline (passive) scan of the full local stack: Identity, BFF and API as started by docker-compose.yml.
+# Accepted/informational alerts are listed with a reason in .zap/rules.tsv; any other warning fails the run.
+name: ZAP baseline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 2" # weekly
+  pull_request:
+    branches: [main]
+    paths:
+      - "EduEco/EduEco.Identity/**"
+      - "EduEco/EduEco.Bff/**"
+      - "EduEco/EduEco.Api/**"
+      - "docker-compose.yml"
+      - ".zap/**"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: EduEco/global.json
+
+      - name: Throwaway environment and development certificates
+        shell: pwsh
+        run: |
+          function New-Secret { -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ }) }
+          @(
+            "MSSQL_SA_PASSWORD=Zap-$(New-Secret)!1a"
+            "SQL_PORT=14333"
+            "DEV_USER_PASSWORD=Zap-$(New-Secret)!1a"
+            "IDENTITY_CERT_PASSWORD=$(New-Secret)"
+          ) | Set-Content -Path .env -Encoding utf8NoBOM
+          ./tools/New-DevCertificates.ps1
+
+      - name: Start stack
+        run: |
+          docker compose up -d --build
+          for _ in $(seq 1 60); do
+            if curl -skf https://localhost:7013/.well-known/openid-configuration >/dev/null \
+               && curl -skf https://localhost:7100/health/live >/dev/null \
+               && curl -skf https://localhost:7037/health/live >/dev/null; then
+              echo "stack is up"; exit 0
+            fi
+            sleep 5
+          done
+          docker compose ps -a
+          docker compose logs --tail 100
+          exit 1
+
+      - name: Scan Identity
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: https://localhost:7013/
+          rules_file_name: .zap/rules.tsv
+          cmd_options: "-a -m 2"
+          allow_issue_writing: false
+          fail_action: true
+          artifact_name: zap-identity
+
+      - name: Scan BFF
+        if: ${{ !cancelled() }}
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: https://localhost:7100/
+          rules_file_name: .zap/rules.tsv
+          cmd_options: "-a -m 2"
+          allow_issue_writing: false
+          fail_action: true
+          artifact_name: zap-bff
+
+      - name: Scan API
+        if: ${{ !cancelled() }}
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: https://localhost:7037/
+          rules_file_name: .zap/rules.tsv
+          cmd_options: "-a -m 2"
+          allow_issue_writing: false
+          fail_action: true
+          artifact_name: zap-api
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v

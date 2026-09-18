@@ -1,0 +1,18 @@
+@page
+@model EduEco.Identity.Pages.Account.Manage.IndexModel
+@{
+    ViewData["Title"] = "Security";
+}
+
+<h1>Security settings</h1>
+
+<ul class="plain">
+    <li>
+        <span>Authenticator app (TOTP) — <strong>@(Model.TwoFactorEnabled ? "on" : "off")</strong></span>
+        <a asp-page="./TwoFactor">Manage</a>
+    </li>
+    <li>
+        <span>Passkeys — <strong>@Model.PasskeyCount</strong></span>
+        <a asp-page="./Passkeys">Manage</a>
+    </li>
+</ul>

@@ -1,0 +1,45 @@
+@page
+@model EduEco.Identity.Pages.Account.Manage.PasskeysModel
+@{
+    ViewData["Title"] = "Passkeys";
+}
+
+<h1>Passkeys</h1>
+<p>Passkeys are phishing-resistant and replace your password and authenticator code on this device.</p>
+
+@if (Model.StatusMessage is not null)
+{
+    <p class="status">@Model.StatusMessage</p>
+}
+
+@if (Model.Passkeys.Count > 0)
+{
+    <ul class="plain">
+        @foreach (var passkey in Model.Passkeys)
+        {
+            <li>
+                <span>@passkey.Name <small>added @passkey.CreatedAt.ToString("yyyy-MM-dd")</small></span>
+                <form method="post" asp-page-handler="Delete">
+                    <input type="hidden" name="id" value="@passkey.Id" />
+                    <button type="submit" class="secondary">Remove</button>
+                </form>
+            </li>
+        }
+    </ul>
+}
+
+<form method="post" asp-page-handler="Register">
+    <input type="hidden" name="credentialJson" />
+    <label for="name">Passkey name</label>
+    <input id="name" name="name" type="text" maxlength="100" placeholder="e.g. Work laptop" />
+    <p class="error" data-passkey-error hidden></p>
+    <button type="button"
+            data-passkey-register
+            data-options-url="@Url.Page("/Account/Manage/Passkeys", "CreationOptions")">
+        Add a passkey
+    </button>
+</form>
+
+@section Scripts {
+    <script src="~/js/passkeys.js" asp-append-version="true"></script>
+}

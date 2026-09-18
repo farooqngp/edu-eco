@@ -1,0 +1,22 @@
+﻿@page
+@model EduEco.Identity.Pages.ErrorModel
+@{
+    ViewData["Title"] = "Error";
+}
+
+<h1>Request could not be completed</h1>
+
+@if (Model.Error is not null)
+{
+    <p><strong>@Model.Error</strong></p>
+    @if (Model.ErrorDescription is not null)
+    {
+        <p>@Model.ErrorDescription</p>
+    }
+}
+else
+{
+    <p>Status code: @Model.HttpStatusCode</p>
+}
+
+<p><small>Request id: <code>@Model.RequestId</code></small></p>

@@ -1,0 +1,17 @@
+@page
+@model EduEco.Identity.Pages.Account.ConfirmEmailModel
+@{
+    ViewData["Title"] = "Confirm email";
+}
+
+<h1>Email confirmation</h1>
+@if (Model.Confirmed)
+{
+    <p class="status">Your email address is confirmed. You can now sign in.</p>
+    <a class="button" asp-page="./Login">Sign in</a>
+}
+else
+{
+    <p class="error">The confirmation link is invalid or has expired.</p>
+    <a asp-page="./ResendEmailConfirmation">Send a new confirmation link</a>
+}
