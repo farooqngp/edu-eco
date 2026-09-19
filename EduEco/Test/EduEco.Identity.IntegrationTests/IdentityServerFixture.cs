@@ -46,6 +46,8 @@ public sealed class IdentityServerFixture : IAsyncLifetime
     public const string ParClientId = "it-web-par";
     public const string MobileClientId = "it-mobile";
     public const string ResourceClientId = Resources.Api; // resource server doubling as token-exchange/introspection client
+    public const string RopcClientId = "it-api-ropc";
+    public const string InternalApiClientId = "it-api-internal";
     public const string RedirectUri = "https://client.test/callback";
     public const string PostLogoutRedirectUri = "https://client.test/signed-out";
     public const string BackchannelLogoutUri = "https://client.test/backchannel-logout";
@@ -263,6 +265,23 @@ public sealed class IdentityServerFixture : IAsyncLifetime
             Scopes = { Scopes.ReportingRead },
             Resources = { Resources.Reporting },
             AllowIntrospection = true,
+        };
+        seedOptions.Clients[RopcClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = clientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { OpenIddictConstants.GrantTypes.Password, "refresh_token" },
+            Scopes = { "openid", "profile", "email", "offline_access", Scopes.ApiRead, Scopes.ApiWrite },
+        };
+        seedOptions.Clients[InternalApiClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = clientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { "client_credentials" },
+            Scopes = { Scopes.IdentityInternal },
+            Resources = { Resources.IdentityInternal },
         };
 
         await new OpenIddictClientSeeder(

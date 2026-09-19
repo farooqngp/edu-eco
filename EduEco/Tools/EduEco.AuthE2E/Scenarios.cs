@@ -36,6 +36,12 @@ internal sealed class Scenarios(Settings settings) : IDisposable
     private long? _registeredUserId;
     private string? _registeredPassword;
     private long? _membershipId;
+    private string? _inviteCode;
+    private string? _apiRegisteredEmail;
+    private const string ApiRegisteredPassword = "E2e-Api-9Zq!";
+    private string? _apiConfirmationLink;
+    private string? _apiAccessToken;
+    private string? _apiRefreshToken;
 
     private string Issuer => _discovery.GetProperty("issuer").GetString()!;
 
@@ -47,7 +53,7 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         Console.WriteLine();
 
         await Section("A", "Discovery", [
-            ("A1", "Discovery advertises PAR, DPoP, token exchange, private_key_jwt, back-channel logout, S256 only", DiscoveryAsync),
+            ("A1", "Discovery advertises PAR, DPoP, token exchange, private_key_jwt, back-channel logout, S256 only, no implicit", DiscoveryAsync),
             ("A2", "JWKS publishes signing keys", JwksAsync),
         ]);
 
@@ -108,6 +114,15 @@ internal sealed class Scenarios(Settings settings) : IDisposable
             ("I3", "Logout in one browser ends the user's BFF session in another browser (back-channel logout)", BffBackchannelLogoutAsync),
         ]);
 
+        await Section("J", "Angular SPA registration via EduEco.Api (invite-gated, ROPC)", [
+            ("J1", "Tenant admin issues a single-use invite (API)", IssueInviteAsync),
+            ("J2", "Register via API with the invite → confirmation email in Mailpit", ApiRegisterAsync),
+            ("J3", "Reusing the same single-use invite is rejected", InviteReuseRejectedAsync),
+            ("J4", "Confirm email address from the emailed link", ApiConfirmEmailAsync),
+            ("J5", "Login via API (ROPC) issues tokens; API proxies to the caller's own profile", ApiLoginAndProfileAsync),
+            ("J6", "Refresh via API issues a new access token", ApiRefreshAsync),
+        ]);
+
         return Summary();
     }
 
@@ -124,7 +139,8 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         Expect.That(_discovery.TryGetProperty("dpop_signing_alg_values_supported", out var algs) && algs.GetArrayLength() > 0, "DPoP algorithms not advertised");
         Expect.That(_discovery.TryGetProperty("backchannel_logout_supported", out var bcl) && bcl.GetBoolean(), "back-channel logout not advertised");
         Expect.That(_discovery.GetProperty("code_challenge_methods_supported").EnumerateArray().Select(e => e.GetString()).SequenceEqual(["S256"]), "PKCE methods other than S256 advertised");
-        Expect.That(!Contains("grant_types_supported", "password") && !Contains("grant_types_supported", "implicit"), "legacy grant advertised");
+        // Password (ROPC) is deliberately on, scoped to one trusted server-to-server client (eduEco-api-ropc); implicit stays off.
+        Expect.That(!Contains("grant_types_supported", "implicit"), "legacy grant advertised");
         return $"issuer {Issuer}";
     }
 
@@ -603,6 +619,83 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         throw new CheckFailedException("the other browser session is still active after 20 s (check identity logs for back-channel delivery)");
     }
 
+    // ───────────────────────────── J. Angular SPA via EduEco.Api ─────────────────────────────
+
+    private async Task<string> IssueInviteAsync()
+    {
+        // A fresh sign-in, not the shared _admin token: Section H deliberately revokes/rotates that one.
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var admin = await SignInMobileAsync(Settings.TenantAdmin, settings.DevUserPassword, key);
+
+        var body = await ApiAsync(HttpMethod.Post, "api/v1/invites", admin.AccessToken, HttpStatusCode.Created, key,
+            new { roleName = "Student", expiresAtUtc = DateTimeOffset.UtcNow.AddDays(7) });
+        _inviteCode = body.GetProperty("code").GetString();
+        return $"invite {body.GetProperty("inviteId")}, expires {body.GetProperty("expiresAtUtc")}";
+    }
+
+    private async Task<string> ApiRegisterAsync()
+    {
+        _apiRegisteredEmail = $"e2e-api-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local";
+        var body = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/register", HttpStatusCode.Accepted, new
+        {
+            inviteCode = Expect.NotNull(_inviteCode, "prerequisite missing (J1)"),
+            email = _apiRegisteredEmail,
+            displayName = "E2E API Student",
+            password = ApiRegisteredPassword,
+        });
+        Expect.That(body.GetProperty("requiresEmailConfirmation").GetBoolean(), "expected requiresEmailConfirmation=true");
+
+        var link = await _mail.WaitForLinkAsync(_apiRegisteredEmail, "Confirm", TimeSpan.FromSeconds(15));
+        _apiConfirmationLink = link.ToString();
+        return $"{_apiRegisteredEmail} registered, confirmation link received";
+    }
+
+    private async Task<string> InviteReuseRejectedAsync()
+    {
+        await AuthApiAsync(HttpMethod.Post, "api/v1/auth/register", HttpStatusCode.Conflict, new
+        {
+            inviteCode = Expect.NotNull(_inviteCode, "prerequisite missing (J1)"),
+            email = $"e2e-api-second-{Guid.NewGuid():N}"[..24] + "@demo.eduEco.local",
+            displayName = "Second User",
+            password = ApiRegisteredPassword,
+        });
+        return "single-use invite cannot register a second account";
+    }
+
+    private async Task<string> ApiConfirmEmailAsync()
+    {
+        using var response = await _identity.GetAsync(new Uri(Expect.NotNull(_apiConfirmationLink, "prerequisite missing (J2)")));
+        var html = await response.Content.ReadAsStringAsync();
+        Expect.That(response.StatusCode == HttpStatusCode.OK && html.Contains("Your email address is confirmed", StringComparison.Ordinal),
+            $"confirmation page did not confirm ({(int)response.StatusCode})");
+        return "confirmed";
+    }
+
+    private async Task<string> ApiLoginAndProfileAsync()
+    {
+        var login = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/login", HttpStatusCode.OK, new
+        {
+            identifier = Expect.NotNull(_apiRegisteredEmail, "prerequisite missing (J2)"),
+            password = ApiRegisteredPassword,
+        });
+        _apiAccessToken = login.GetProperty("accessToken").GetString();
+        _apiRefreshToken = login.GetProperty("refreshToken").GetString();
+
+        await ApiAsync(HttpMethod.Put, "api/v1/profile", _apiAccessToken!, HttpStatusCode.OK, json: new { city = "Springfield", country = "US" });
+        var profile = await ApiAsync(HttpMethod.Get, "api/v1/profile", _apiAccessToken!, HttpStatusCode.OK);
+        Expect.That(profile.GetProperty("city").GetString() == "Springfield", "profile update did not round-trip");
+        return $"token_type={login.GetProperty("tokenType").GetString()}, profile city={profile.GetProperty("city").GetString()}";
+    }
+
+    private async Task<string> ApiRefreshAsync()
+    {
+        var body = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/refresh", HttpStatusCode.OK,
+            new { refreshToken = Expect.NotNull(_apiRefreshToken, "prerequisite missing (J5)") });
+        var newAccessToken = body.GetProperty("accessToken").GetString();
+        Expect.That(!string.IsNullOrEmpty(newAccessToken), "no access token in refresh response");
+        return "refreshed access token issued";
+    }
+
     // ───────────────────────────── helpers ─────────────────────────────
 
     private sealed record TokenSet(string AccessToken, string RefreshToken, string TokenType);
@@ -725,6 +818,14 @@ internal sealed class Scenarios(Settings settings) : IDisposable
             request.Content = JsonContent.Create(json);
         }
 
+        using var response = await _api.SendAsync(request);
+        return await Expect.StatusAsync(response, expected);
+    }
+
+    /// <summary>Anonymous JSON call to EduEco.Api's auth gateway (register/login/refresh/forgot-password) — no bearer token.</summary>
+    private async Task<JsonElement> AuthApiAsync(HttpMethod method, string path, HttpStatusCode expected, object json)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(settings.Api, path)) { Content = JsonContent.Create(json) };
         using var response = await _api.SendAsync(request);
         return await Expect.StatusAsync(response, expected);
     }

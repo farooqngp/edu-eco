@@ -49,6 +49,7 @@ services:
       # private_key_jwt: only the public certificates are mounted into the migrator.
       Seed__Clients__eduEco-bff__PublicKeyCertificatePath: /certs/bff-client.cer
       Seed__Clients__eduEco-api__PublicKeyCertificatePath: /certs/api-client.cer
+      Seed__Clients__eduEco-api-ropc__PublicKeyCertificatePath: /certs/api-client.cer
       Seed__Clients__eduEco-svc-dev__PublicKeyCertificatePath: /certs/svc-dev-client.cer
       Seed__DevUsers__Password: ${DEV_USER_PASSWORD:?Set DEV_USER_PASSWORD in .env}
     volumes:
@@ -132,6 +133,8 @@ services:
       Authentication__Introspection__CertificatePassword: ${IDENTITY_CERT_PASSWORD}
       # The container OS does not trust the host's ASP.NET dev certificate (Development-only switch, refused elsewhere).
       Authentication__AllowUntrustedBackchannelCertificate: "true"
+      # Angular dev server (ng serve), calling this API directly from api/v1/auth/* and api/v1/profile.
+      Authentication__AllowedSpaOrigins__0: http://localhost:4200
     volumes:
       - ./certs:/certs:ro
     depends_on:

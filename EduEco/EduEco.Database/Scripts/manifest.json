@@ -5,5 +5,7 @@
   "01_Migrations/V0004__tenants.sql": "7284257710de77ce32d21a900db4a57aefd35624e937be6f5fea4c7b00b2aa52",
   "01_Migrations/V0005__permissions_memberships.sql": "f8acacd9e77fcfbad7b0b451246a3d9be41eca49b91266658df0fb0652f0d1ef",
   "01_Migrations/V0006__auth_user_passkeys.sql": "1d2ec21626c2859e2406cd4d5ed8f081b9a4ea5a5b559c1a91704a8e17aec522",
-  "01_Migrations/V0007__bff_sessions.sql": "a00aa58b419a595fc1d77dc032f037fc33116e7a54f5fa09a1b97fb82eabee6e"
+  "01_Migrations/V0007__bff_sessions.sql": "a00aa58b419a595fc1d77dc032f037fc33116e7a54f5fa09a1b97fb82eabee6e",
+  "01_Migrations/V0008__tenant_invites.sql": "3e56df38ba901395b78550e1abcf39d9269a9f5be85933ff5973f5a7ad1d3ff2",
+  "01_Migrations/V0009__user_profiles.sql": "8f49055dfa77fbf704a9314ec627999a9e8cbcba69040b709bb14bce987abd83"
 }

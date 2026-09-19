@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "edu-eco-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "--prefix", "Web/edu-eco-app"],
+      "port": 4200
+    }
+  ]
+}

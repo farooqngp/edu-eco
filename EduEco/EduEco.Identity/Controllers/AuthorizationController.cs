@@ -160,6 +160,11 @@ public sealed class AuthorizationController(
             return await ExchangeDelegationAsync(request, cancellationToken);
         }
 
+        if (request.IsPasswordGrantType())
+        {
+            return await ExchangePasswordAsync(request, cancellationToken);
+        }
+
         throw new InvalidOperationException("The specified grant type is not supported.");
     }
 
@@ -288,6 +293,44 @@ public sealed class AuthorizationController(
         }
 
         AuditLog.TokenExchanged(logger, request.ClientId, subject, string.Join(' ', principal.GetResources()));
+        return SignIn(principal, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+    }
+
+    /// <summary>
+    /// ROPC (RFC 6749 §4.3), permitted only for <c>eduEco-api-ropc</c> (see OpenIddictClientSeeder). No interactive UI is
+    /// available here: 2FA/passkey-only accounts and users with more than one tenant cannot complete sign-in through this
+    /// grant and must use the browser (authorization-code) flow instead.
+    /// </summary>
+    private async Task<IActionResult> ExchangePasswordAsync(OpenIddictRequest request, CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByEmailAsync(request.Username ?? string.Empty);
+        var result = user is null
+            ? Microsoft.AspNetCore.Identity.SignInResult.Failed
+            : await signInManager.CheckPasswordSignInAsync(user, request.Password ?? string.Empty, lockoutOnFailure: true);
+
+        if (result.IsLockedOut)
+        {
+            AuditLog.LockedOut(logger, user!.Id);
+            return Reject(request, Errors.InvalidGrant, "The account is temporarily locked out.");
+        }
+
+        if (!result.Succeeded)
+        {
+            // Same error for unknown user, wrong password, unconfirmed email and 2FA-required accounts (no enumeration).
+            AuditLog.SignInFailed(logger, "ropc", result.RequiresTwoFactor ? "requires-2fa" : result.IsNotAllowed ? "not-allowed" : "invalid-credentials");
+            return Reject(request, Errors.InvalidGrant, "The username or password is incorrect.");
+        }
+
+        var selection = await tenantAccessResolver.SelectAsync(user!, requestedTenantCode: null, cancellationToken);
+        if (selection.Kind != TenantSelectionKind.Selected)
+        {
+            return Reject(request, Errors.InvalidGrant, "Sign in through the browser to select a tenant.");
+        }
+
+        var principal = await principalFactory.CreateForUserAsync(user!, selection.Tenant!, request.GetScopes(), timeProvider.GetUtcNow(), cancellationToken);
+
+        AuditLog.SignInSucceeded(logger, user!.Id, "ropc");
+        AuditLog.AuthorizationGranted(logger, request.ClientId, user.Id, selection.Tenant!.Id);
         return SignIn(principal, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 

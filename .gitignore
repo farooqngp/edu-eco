@@ -11,6 +11,9 @@
 *.sln.docstates
 *.env
 
+# Claude Code: personal tool preferences, not shared config (.claude/launch.json is shared and stays tracked)
+.claude/settings.local.json
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

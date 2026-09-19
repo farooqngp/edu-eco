@@ -9,6 +9,12 @@ public static class Scopes
 
     /// <summary>Downstream reporting service; reachable only through token exchange (RFC 8693).</summary>
     public const string ReportingRead = "reporting.read";
+
+    /// <summary>
+    /// Server-to-server only: lets a trusted client (EduEco.Api) call Identity's internal JSON registration/password-reset
+    /// endpoints on a user's behalf. Never granted to a browser or mobile client.
+    /// </summary>
+    public const string IdentityInternal = "identity.internal";
 }
 
 /// <summary>OAuth resource (token audience) identifiers.</summary>
@@ -18,6 +24,9 @@ public static class Resources
 
     /// <summary>Downstream service receiving delegated (exchanged) tokens.</summary>
     public const string Reporting = "eduEco-reporting";
+
+    /// <summary>Identity's own internal API surface (registration/password-reset), distinct from its OIDC endpoints.</summary>
+    public const string IdentityInternal = "eduEco-identity-internal";
 }
 
 /// <summary>Custom JWT claim types.</summary>

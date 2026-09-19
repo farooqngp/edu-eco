@@ -28,6 +28,8 @@ public sealed class MigrationTests(SqlServerFixture fixture)
             "01_Migrations/V0005__permissions_memberships.sql",
             "01_Migrations/V0006__auth_user_passkeys.sql",
             "01_Migrations/V0007__bff_sessions.sql",
+            "01_Migrations/V0008__tenant_invites.sql",
+            "01_Migrations/V0009__user_profiles.sql",
         ], ignoreOrder: true);
     }
 

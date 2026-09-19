@@ -44,6 +44,7 @@ public sealed class ApiFixture : IAsyncLifetime
     public const string TenantServiceClientId = "it-svc-alpha";
     public const string PlatformServiceClientId = "it-svc-platform";
     public const string ServiceClientSecret = "it-svc-secret-0123456789abcdefghij";
+    public const string RopcClientId = "it-api-ropc";
     public const string RedirectUri = "https://client.test/callback";
 
     private const string CertificatePassword = "it-cert-password";
@@ -202,6 +203,21 @@ public sealed class ApiFixture : IAsyncLifetime
         return tokens.AccessToken;
     }
 
+    public async Task<ApplicationUser?> FindUserByEmailAsync(string email)
+    {
+        await using var scope = Identity.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByEmailAsync(email);
+    }
+
+    public async Task ConfirmEmailAsync(string email)
+    {
+        await using var scope = Identity.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByEmailAsync(email) ?? throw new InvalidOperationException($"User '{email}' not found.");
+        var token = await users.GenerateEmailConfirmationTokenAsync(user);
+        Ensure(await users.ConfirmEmailAsync(user, token));
+    }
+
     private async Task SeedAsync(IServiceProvider services, string apiClientCertificatePath)
     {
         TenantAlpha = await CreateTenantAsync("alpha");
@@ -237,13 +253,26 @@ public sealed class ApiFixture : IAsyncLifetime
             Scopes = { Scopes.ApiRead },
         };
 
-        // Resource server client: private_key_jwt, introspection only.
+        // Resource server client: private_key_jwt, introspection + client-credentials into Identity's internal endpoints.
         seed.Clients[Resources.Api] = new ClientSeed
         {
             ClientType = "confidential",
             PublicKeyCertificatePath = apiClientCertificatePath,
             PublicKeyCertificatePassword = CertificatePassword,
             AllowIntrospection = true,
+            GrantTypes = { "client_credentials" },
+            Scopes = { Scopes.IdentityInternal },
+            Resources = { Resources.IdentityInternal },
+        };
+
+        // ROPC login/refresh, same cert as the resource server client (see OpenIddictClientSeeder for the production analogue).
+        seed.Clients[RopcClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = apiClientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { "password", "refresh_token" },
+            Scopes = { "openid", "profile", "email", "offline_access", Scopes.ApiRead, Scopes.ApiWrite },
         };
 
         await using var scope = services.CreateAsyncScope();
@@ -304,12 +333,14 @@ public sealed class ApiFixture : IAsyncLifetime
             builder.UseSetting("ConnectionStrings:EduEco", connectionString);
             builder.UseSetting("Authentication:Authority", Issuer);
             builder.UseSetting("Authentication:PermitsPerMinute", "100000");
+            builder.UseSetting("Authentication:AuthEndpointPermitsPerMinute", "100000");
             builder.UseSetting("AuthorizationCache:PermissionCacheDuration", "00:05:00");
             builder.UseSetting("AuthorizationCache:TenantStatusCacheDuration", "00:00:00");
             builder.UseSetting("ConnectionStrings:Redis", redis);
             builder.UseSetting("Authentication:Introspection:Enabled", "true");
             builder.UseSetting("Authentication:Introspection:CertificatePath", apiClientCertificatePath);
             builder.UseSetting("Authentication:Introspection:CertificatePassword", CertificatePassword);
+            builder.UseSetting("Authentication:RopcClientId", RopcClientId);
 
             builder.ConfigureTestServices(services =>
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>

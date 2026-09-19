@@ -175,7 +175,10 @@ public sealed class AuthorizationTests(ApiFixture fixture)
         endpoints.ShouldNotBeEmpty();
 
         var anonymous = endpoints.Where(e => e.Metadata.GetMetadata<IAllowAnonymous>() is not null).Select(e => e.RoutePattern.RawText).ToList();
-        anonymous.ShouldBe(["/health/live"], "only explicitly approved endpoints may be anonymous (OpenAPI/Scalar are Development-only)");
+        anonymous.ShouldBe(
+            ["/health/live", "api/v1/auth/register", "api/v1/auth/login", "api/v1/auth/refresh", "api/v1/auth/forgot-password"],
+            ignoreOrder: true,
+            customMessage: "only explicitly approved endpoints may be anonymous (OpenAPI/Scalar are Development-only)");
 
         foreach (var endpoint in endpoints.Where(e => e.RoutePattern.RawText!.StartsWith("api/", StringComparison.Ordinal)))
         {

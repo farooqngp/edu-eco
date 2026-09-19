@@ -1,5 +1,7 @@
 using EduEco.Application.Abstractions.Security;
+using EduEco.Application.Invites;
 using EduEco.Application.Memberships;
+using EduEco.Application.Profiles;
 using EduEco.Infrastructure.Authorization;
 using EduEco.Infrastructure.Queries;
 using Microsoft.Extensions.Configuration;
@@ -26,6 +28,12 @@ public static class AuthorizationExtensions
 
         services.TryAddScoped<IMembershipQueries, MembershipQueries>();
         services.TryAddScoped<MembershipService>();
+
+        services.TryAddScoped<IInviteQueries, InviteQueries>();
+        services.TryAddScoped<InviteService>();
+
+        services.TryAddScoped<IProfileQueries, ProfileQueries>();
+        services.TryAddScoped<ProfileService>();
 
         return services;
     }

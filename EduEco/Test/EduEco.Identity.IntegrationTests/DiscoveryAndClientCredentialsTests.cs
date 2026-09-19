@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using EduEco.Core.Authorization;
+using EduEco.Infrastructure.Security;
 using Shouldly;
 
 namespace EduEco.Identity.IntegrationTests;
@@ -18,7 +19,7 @@ public sealed class DiscoveryAndClientCredentialsTests(IdentityServerFixture fix
 
         root.GetProperty("issuer").GetString().ShouldBe(IdentityServerFixture.Issuer);
         Strings(root, "grant_types_supported").ShouldBe(
-            ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange"], ignoreOrder: true);
+            ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange", "password"], ignoreOrder: true);
         Strings(root, "response_types_supported").ShouldBe(["code"]);
         Strings(root, "code_challenge_methods_supported").ShouldBe(["S256"]);
         Strings(root, "scopes_supported").ShouldContain(Scopes.ApiRead);
@@ -86,7 +87,7 @@ public sealed class DiscoveryAndClientCredentialsTests(IdentityServerFixture fix
     }
 
     [Fact]
-    public async Task Password_grant_is_not_supported()
+    public async Task Password_grant_is_rejected_for_a_client_without_the_permission()
     {
         var client = new OidcTestClient(fixture.CreateClient());
 
@@ -100,7 +101,52 @@ public sealed class DiscoveryAndClientCredentialsTests(IdentityServerFixture fix
         });
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        response.Error.ShouldBe("unsupported_grant_type");
+        response.Error.ShouldBe("unauthorized_client");
+    }
+
+    [Fact]
+    public async Task Password_grant_issues_tokens_for_the_trusted_ropc_client()
+    {
+        var user = await fixture.CreateUserAsync("ropc", [(fixture.TenantAlpha, Roles.Student)]);
+        var client = new OidcTestClient(fixture.CreateClient());
+
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "password",
+            ["username"] = user.Email!,
+            ["password"] = IdentityServerFixture.Password,
+            ["scope"] = "openid api.read offline_access",
+        };
+        ClientAssertion.AddTo(form, IdentityServerFixture.RopcClientId, fixture.CreateClientAssertion(IdentityServerFixture.RopcClientId));
+
+        var response = await client.TokenAsync(form);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, response.Body.ToString());
+        response.Get("refresh_token").ShouldNotBeNull("offline_access was requested");
+        var jwt = await client.ValidateAccessTokenAsync(response.AccessToken);
+        jwt.Subject.ShouldBe(user.Id.ToString(CultureInfo.InvariantCulture));
+        jwt.Audiences.ShouldContain(Resources.Api);
+    }
+
+    [Fact]
+    public async Task Password_grant_rejects_wrong_password_without_revealing_account_existence()
+    {
+        var user = await fixture.CreateUserAsync("ropc-wrong");
+        var client = new OidcTestClient(fixture.CreateClient());
+
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "password",
+            ["username"] = user.Email!,
+            ["password"] = "Wrong!Password9",
+            ["scope"] = "openid",
+        };
+        ClientAssertion.AddTo(form, IdentityServerFixture.RopcClientId, fixture.CreateClientAssertion(IdentityServerFixture.RopcClientId));
+
+        var response = await client.TokenAsync(form);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        response.Error.ShouldBe("invalid_grant");
     }
 
     private static string[] Strings(JsonElement root, string property) =>
