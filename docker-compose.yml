@@ -3,6 +3,7 @@ name: eduEco
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: eduEco-sqlserver
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
@@ -21,6 +22,7 @@ services:
   # Scale-out state: HybridCache L2, permission-cache invalidation (pub/sub), DPoP / client assertion / logout jti replay cache.
   redis:
     image: redis:7.4-alpine
+    container_name: eduEco-redis
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -31,6 +33,7 @@ services:
   # Development SMTP sink for password reset / email confirmation. Web UI: http://localhost:8025
   mailpit:
     image: axllent/mailpit:v1.27
+    container_name: eduEco-mailpit
     ports:
       - "8025:8025"
     environment:
@@ -42,6 +45,8 @@ services:
     build:
       context: ./EduEco
       dockerfile: EduEco.Database/Dockerfile
+    image: eduEco/db-migrator:dev
+    container_name: eduEco-db-migrator
     command: ["migrate", "--ensure-db", "--seed-clients", "--seed-dev-users"]
     environment:
       DOTNET_ENVIRONMENT: Development
@@ -68,6 +73,8 @@ services:
     build:
       context: ./EduEco
       dockerfile: EduEco.Identity/Dockerfile
+    image: eduEco/identity:dev
+    container_name: eduEco-identity
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: ""
@@ -117,6 +124,8 @@ services:
     build:
       context: ./EduEco
       dockerfile: EduEco.Api/Dockerfile
+    image: eduEco/api:dev
+    container_name: eduEco-api
     network_mode: "service:identity"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
@@ -133,8 +142,17 @@ services:
       Authentication__Introspection__CertificatePassword: ${IDENTITY_CERT_PASSWORD}
       # The container OS does not trust the host's ASP.NET dev certificate (Development-only switch, refused elsewhere).
       Authentication__AllowUntrustedBackchannelCertificate: "true"
-      # Angular dev server (ng serve), calling this API directly from api/v1/auth/* and api/v1/profile.
+      # Angular SPA (ng serve or the web container), calling this API directly from api/v1/*.
+      # Both loopback spellings are allowed because either can be used locally; the first entry is also the origin
+      # used to build the sign-in link emailed to provisioned tenant administrators.
       Authentication__AllowedSpaOrigins__0: http://localhost:4200
+      Authentication__AllowedSpaOrigins__1: http://127.0.0.1:4200
+      # Invite codes are emailed to the invitee at issuance (same Mailpit sink Identity uses).
+      Email__Smtp__Host: mailpit
+      Email__Smtp__Port: "1025"
+      Email__Smtp__Security: None
+      Email__Smtp__FromAddress: no-reply@eduEco.local
+      Email__Smtp__FromName: EduEco (Development)
     volumes:
       - ./certs:/certs:ro
     depends_on:
@@ -146,6 +164,8 @@ services:
     build:
       context: ./EduEco
       dockerfile: EduEco.Bff/Dockerfile
+    image: eduEco/bff:dev
+    container_name: eduEco-bff
     network_mode: "service:identity"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
@@ -167,6 +187,21 @@ services:
     volumes:
       - ./certs:/certs:ro
       - bff-keys:/keys
+    depends_on:
+      api:
+        condition: service_started
+
+  # Angular SPA, built and served as static files via nginx. Calls EduEco.Api directly
+  # (src/app/core/config.ts, hardcoded https://localhost:7037) — CORS allowed for this origin
+  # via Authentication__AllowedSpaOrigins__0 on the api service.
+  web:
+    build:
+      context: ./Web/edu-eco-app
+      dockerfile: Dockerfile
+    image: eduEco/web:dev
+    container_name: eduEco-web
+    ports:
+      - "4200:80"
     depends_on:
       api:
         condition: service_started

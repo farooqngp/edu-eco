@@ -433,3 +433,6 @@ FodyWeavers.xsd
 
 # Local development certificates (tools/New-DevCertificates.ps1)
 certs/
+
+# Superdesign scratch (canvas drafts, resume state, generated init context)
+.superdesign/

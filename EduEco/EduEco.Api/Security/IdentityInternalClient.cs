@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using EduEco.Api.Configuration;
+using EduEco.Application.Tenants;
 using EduEco.Core.Authorization;
 using EduEco.Infrastructure.Security;
 using EduEco.ServiceRegistry;
@@ -21,6 +22,9 @@ public enum RegistrationOutcome
 
 public sealed record InternalRegistrationResult(RegistrationOutcome Outcome, long? UserId, IReadOnlyList<string> Errors);
 
+/// <summary>Mirrors EduEco.Identity's <c>InternalTenantAdminController</c> response (separate process, JSON contract only).</summary>
+public sealed record InternalTenantAdminResult(AdminProvisionOutcome Outcome, long? UserId, IReadOnlyList<string> Errors);
+
 public sealed record TokenResult(
     [property: JsonPropertyName("access_token")] string AccessToken,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken,
@@ -37,7 +41,7 @@ public sealed class IdentityInternalClient(
     IOptionsMonitor<JwtBearerOptions> jwtOptions,
     IOptions<ApiSecurityOptions> securityOptions,
     CertificateLoader certificates,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider) : ITenantAdminProvisioner
 {
     private readonly Lazy<SigningCredentials> _credentials = new(() =>
     {
@@ -63,6 +67,44 @@ public sealed class IdentityInternalClient(
         using var response = await jwt.Backchannel.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<InternalRegistrationResult>(cancellationToken).ConfigureAwait(false))!;
+    }
+
+    /// <summary>
+    /// Provisions the tenant administrator's account. Identity creates it pre-confirmed with a password nobody knows
+    /// and emails a set-password link, so no credential ever crosses this boundary in either direction.
+    /// </summary>
+    public async Task<AdminProvisionResult> ProvisionAsync(
+        string email, string displayName, string tenantName, CancellationToken cancellationToken = default)
+    {
+        var jwt = Jwt();
+        var configuration = await jwt.ConfigurationManager!.GetConfigurationAsync(cancellationToken).ConfigureAwait(false);
+        var token = await GetInternalApiTokenAsync(jwt, configuration.Issuer, cancellationToken).ConfigureAwait(false);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(configuration.Issuer), "internal/tenant-admins"))
+        {
+            Content = JsonContent.Create(new
+            {
+                Email = email,
+                DisplayName = displayName,
+                TenantName = tenantName,
+                LoginUrl = SpaLoginUrl(),
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        using var response = await jwt.Backchannel.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var result = (await response.Content.ReadFromJsonAsync<InternalTenantAdminResult>(cancellationToken).ConfigureAwait(false))!;
+        return new AdminProvisionResult(result.Outcome, result.UserId, result.Errors);
+    }
+
+    /// <summary>Derived from the CORS allow-list rather than a second config key, so there is one source of truth.</summary>
+    private string SpaLoginUrl()
+    {
+        var origin = securityOptions.Value.AllowedSpaOrigins.FirstOrDefault()
+            ?? throw new InvalidOperationException("Authentication:AllowedSpaOrigins must contain the SPA origin to build the sign-in link sent to provisioned administrators.");
+
+        return new Uri(new Uri(origin.TrimEnd('/') + "/"), "login").ToString();
     }
 
     public async Task RequestPasswordResetAsync(string email, CancellationToken cancellationToken)

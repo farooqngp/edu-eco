@@ -2,7 +2,9 @@ using System.Threading.RateLimiting;
 using EduEco.Api.Configuration;
 using EduEco.Api.Security;
 using EduEco.Api.Security.Authorization;
+using EduEco.Api.Tenants;
 using EduEco.Application.Abstractions.Security;
+using EduEco.Application.Tenants;
 using EduEco.Infrastructure.Security;
 using EduEco.ServiceRegistry;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -36,6 +38,9 @@ internal static class ApiSetup
         services.AddEduEcoDPoP(configuration);
         services.AddSingleton<TokenIntrospectionService>();
         services.AddSingleton<IdentityInternalClient>();
+        services.AddSingleton<ITenantAdminProvisioner>(sp => sp.GetRequiredService<IdentityInternalClient>());
+        // Api-side (not the shared ServiceRegistry): its provisioner port only has an implementation in this host.
+        services.AddScoped<TenantProvisioningService>();
 
         AddAuthentication(services, security, environment);
         AddAuthorization(services);

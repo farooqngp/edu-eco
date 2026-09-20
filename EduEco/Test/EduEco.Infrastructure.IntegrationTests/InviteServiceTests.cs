@@ -29,11 +29,14 @@ public sealed class InviteServiceTests(SqlServerFixture fixture)
     {
         await using var session = NewSession();
         var tenant = await NewTenantAsync(session);
-        var service = NewService(session, new TestTenantContext(tenant));
+        var emails = new RecordingInviteEmailSender();
+        var service = NewService(session, new TestTenantContext(tenant), emails);
 
-        var issued = await service.IssueAsync(new CreateInviteCommand(Roles.Teacher, DateTimeOffset.UtcNow.AddDays(1)), Ct);
+        var issued = await service.IssueAsync(new CreateInviteCommand(Roles.Teacher, DateTimeOffset.UtcNow.AddDays(1), "invitee@it.local"), Ct);
         issued.Succeeded.ShouldBeTrue(issued.Detail);
         issued.Value!.Code.ShouldNotBeNullOrEmpty();
+
+        emails.Sent.ShouldBe([("invitee@it.local", issued.Value.Code, Roles.Teacher)]);
 
         var redemption = await service.ValidateAsync(issued.Value.Code, Ct);
         redemption.Succeeded.ShouldBeTrue(redemption.Detail);
@@ -48,7 +51,7 @@ public sealed class InviteServiceTests(SqlServerFixture fixture)
         var tenant = await NewTenantAsync(session);
         var service = NewService(session, new TestTenantContext(tenant));
 
-        var issued = (await service.IssueAsync(new CreateInviteCommand(Roles.Student, DateTimeOffset.UtcNow.AddDays(1)), Ct)).Value!;
+        var issued = (await service.IssueAsync(new CreateInviteCommand(Roles.Student, DateTimeOffset.UtcNow.AddDays(1), "invitee@it.local"), Ct)).Value!;
         var validated = (await service.ValidateAsync(issued.Code, Ct)).Value!;
         var userId = await NewUserAsync();
 
@@ -97,7 +100,7 @@ public sealed class InviteServiceTests(SqlServerFixture fixture)
         var tenant = await NewTenantAsync(session);
 
         var result = await NewService(session, new TestTenantContext(tenant))
-            .IssueAsync(new CreateInviteCommand("PlatformAdmin", DateTimeOffset.UtcNow.AddDays(1)), Ct);
+            .IssueAsync(new CreateInviteCommand("PlatformAdmin", DateTimeOffset.UtcNow.AddDays(1), "invitee@it.local"), Ct);
 
         result.Succeeded.ShouldBeFalse();
         result.Error.ShouldBe(ResultError.Validation);
@@ -120,8 +123,23 @@ public sealed class InviteServiceTests(SqlServerFixture fixture)
         return tenant.Id;
     }
 
-    private InviteService NewService(DapperSession session, ITenantContext tenantContext) =>
-        new(Repository<TenantInvite>(session, tenantContext), new InviteQueries(fixture.Services.GetRequiredService<IQueryExecutor>()), TimeProvider.System);
+    private InviteService NewService(DapperSession session, ITenantContext tenantContext, IInviteEmailSender? emailSender = null) =>
+        new(
+            Repository<TenantInvite>(session, tenantContext),
+            new InviteQueries(fixture.Services.GetRequiredService<IQueryExecutor>()),
+            emailSender ?? new RecordingInviteEmailSender(),
+            TimeProvider.System);
+
+    private sealed class RecordingInviteEmailSender : IInviteEmailSender
+    {
+        public List<(string Email, string Code, string RoleName)> Sent { get; } = [];
+
+        public Task SendInviteAsync(string email, string code, string roleName, DateTimeOffset expiresAtUtc, CancellationToken cancellationToken = default)
+        {
+            Sent.Add((email, code, roleName));
+            return Task.CompletedTask;
+        }
+    }
 
     private DapperCommandRepository<T> Repository<T>(DapperSession session, ITenantContext tenantContext)
         where T : class, IEntity =>

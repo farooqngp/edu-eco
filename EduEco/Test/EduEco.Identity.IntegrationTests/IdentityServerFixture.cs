@@ -9,6 +9,7 @@ using EduEco.Core.Tenants;
 using EduEco.Database.Migrator;
 using EduEco.Database.Seeders;
 using EduEco.Identity.Controllers;
+using EduEco.Identity.Email;
 using EduEco.Identity.Logout;
 using EduEco.Infrastructure.Persistence;
 using EduEco.Infrastructure.Security;
@@ -331,6 +332,7 @@ public sealed class IdentityServerFixture : IAsyncLifetime
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IEmailSender<ApplicationUser>>(emails);
+                services.AddSingleton<IProvisioningEmailSender>(emails);
                 services.AddHttpClient(BackchannelLogoutWorker.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => backchannel)
                     .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
@@ -351,7 +353,7 @@ public sealed class IdentityServerFixture : IAsyncLifetime
 }
 
 /// <summary>In-memory outbox replacing SMTP.</summary>
-public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>
+public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>, IProvisioningEmailSender
 {
     public ConcurrentQueue<(string To, string Kind, string Link)> Sent { get; } = new();
 
@@ -368,6 +370,18 @@ public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>
     }
 
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) => Task.CompletedTask;
+
+    public Task SendTenantAdminInvitationAsync(ApplicationUser user, string email, string tenantName, string setPasswordLink, string loginUrl)
+    {
+        Sent.Enqueue((email, "provision-invite", setPasswordLink));
+        return Task.CompletedTask;
+    }
+
+    public Task SendTenantAdminGrantedAsync(ApplicationUser user, string email, string tenantName, string loginUrl)
+    {
+        Sent.Enqueue((email, "provision-granted", loginUrl));
+        return Task.CompletedTask;
+    }
 
     public string? LastLinkFor(string email, string kind) =>
         Sent.Where(m => m.To == email && m.Kind == kind).Select(m => m.Link).LastOrDefault();

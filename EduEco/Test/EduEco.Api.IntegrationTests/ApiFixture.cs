@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -66,6 +67,9 @@ public sealed class ApiFixture : IAsyncLifetime
 
     public X509Certificate2 SigningCertificate { get; private set; } = null!;
 
+    /// <summary>Stands in for the Identity host's account provisioning (see <see cref="ITenantAdminProvisioner"/>).</summary>
+    public FakeTenantAdminProvisioner Provisioner { get; } = new();
+
     public TenantSummary TenantAlpha { get; private set; } = null!;
 
     public TenantSummary TenantBeta { get; private set; } = null!;
@@ -95,8 +99,8 @@ public sealed class ApiFixture : IAsyncLifetime
         await SeedAsync(_identity.Services, apiClientPath);
 
         var redis = _redis.GetConnectionString();
-        _api = new ApiFactory(connectionString, _identity, redis, apiClientPath);
-        _apiB = new ApiFactory(connectionString, _identity, redis, apiClientPath);
+        _api = new ApiFactory(connectionString, _identity, redis, apiClientPath, Provisioner);
+        _apiB = new ApiFactory(connectionString, _identity, redis, apiClientPath, Provisioner);
     }
 
     public async ValueTask DisposeAsync()
@@ -324,7 +328,12 @@ public sealed class ApiFixture : IAsyncLifetime
         }
     }
 
-    private sealed class ApiFactory(string connectionString, IdentityFactory identity, string redis, string apiClientCertificatePath)
+    private sealed class ApiFactory(
+        string connectionString,
+        IdentityFactory identity,
+        string redis,
+        string apiClientCertificatePath,
+        FakeTenantAdminProvisioner provisioner)
         : WebApplicationFactory<MeController>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -343,6 +352,11 @@ public sealed class ApiFixture : IAsyncLifetime
             builder.UseSetting("Authentication:RopcClientId", RopcClientId);
 
             builder.ConfigureTestServices(services =>
+            {
+                // Account creation lives in the Identity host; stubbing the port keeps these tests on the Api's own
+                // orchestration (code pre-check, membership attach, replay safety) instead of a cross-service call.
+                services.AddSingleton<ITenantAdminProvisioner>(provisioner);
+
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
                     // Route discovery/JWKS requests to the in-memory Identity server.
@@ -351,7 +365,8 @@ public sealed class ApiFixture : IAsyncLifetime
                         new Uri(new Uri(Issuer), ".well-known/openid-configuration").ToString(),
                         new OpenIdConnectConfigurationRetriever(),
                         new HttpDocumentRetriever(options.Backchannel) { RequireHttps = true });
-                }));
+                });
+            });
         }
     }
 
@@ -376,4 +391,44 @@ public sealed class ApiCollection : ICollectionFixture<ApiFixture>
 internal static class InvariantExtensions
 {
     public static string Invariant(this long value) => value.ToString(CultureInfo.InvariantCulture);
+}
+
+/// <summary>
+/// Fake for the Identity-hosted account provisioning. Hands out ascending user ids, records what it was asked for,
+/// and can be told to report an existing account or a validation failure.
+/// </summary>
+public sealed class FakeTenantAdminProvisioner : ITenantAdminProvisioner
+{
+    public ConcurrentQueue<(string Email, string DisplayName, string TenantName)> Calls { get; } = new();
+
+    public AdminProvisionOutcome NextOutcome { get; set; } = AdminProvisionOutcome.Created;
+
+    /// <summary>
+    /// The id to hand back. Must be a real <c>auth.AspNetUsers</c> row: in production Identity has genuinely created
+    /// the account by this point, and the membership insert has a foreign key to it. Tests set it with
+    /// <see cref="ApiFixture.CreateUserAsync"/>.
+    /// </summary>
+    public long? NextUserId { get; set; }
+
+    public Task<AdminProvisionResult> ProvisionAsync(string email, string displayName, string tenantName, CancellationToken cancellationToken = default)
+    {
+        Calls.Enqueue((email, displayName, tenantName));
+
+        if (NextOutcome == AdminProvisionOutcome.ValidationFailed)
+        {
+            return Task.FromResult(new AdminProvisionResult(NextOutcome, null, ["The administrator account could not be created."]));
+        }
+
+        var userId = NextUserId
+            ?? throw new InvalidOperationException($"{nameof(NextUserId)} must be set to an existing user id before provisioning.");
+
+        return Task.FromResult(new AdminProvisionResult(NextOutcome, userId, []));
+    }
+
+    public void Reset()
+    {
+        Calls.Clear();
+        NextOutcome = AdminProvisionOutcome.Created;
+        NextUserId = null;
+    }
 }

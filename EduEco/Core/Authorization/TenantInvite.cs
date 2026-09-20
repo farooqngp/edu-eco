@@ -17,6 +17,9 @@ public sealed class TenantInvite : IEntity, ITenantOwned, IAuditable, IConcurren
 
     public long RoleId { get; set; }
 
+    /// <summary>Address the code was emailed to at issuance. Null for invites issued before this was captured.</summary>
+    public string? InviteeEmail { get; set; }
+
     public DateTimeOffset ExpiresAtUtc { get; set; }
 
     public int MaxUses { get; set; } = 1;

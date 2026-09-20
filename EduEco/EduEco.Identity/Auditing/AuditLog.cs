@@ -39,6 +39,10 @@ internal static partial class AuditLog
     [LoggerMessage(EventId = 5021, Level = LogLevel.Warning, Message = "AUDIT authorization denied: client {ClientId}, reason {Reason}")]
     public static partial void AuthorizationDenied(ILogger logger, string? clientId, string reason);
 
+    /// <summary>The most privileged token shape: platform admin, no tenant, non-refreshable. Kept greppable on purpose.</summary>
+    [LoggerMessage(EventId = 5022, Level = LogLevel.Warning, Message = "AUDIT tenant-less platform-admin token issued: client {ClientId}, user {UserId}")]
+    public static partial void PlatformAdminTokenIssued(ILogger logger, string? clientId, long userId);
+
     [LoggerMessage(EventId = 5030, Level = LogLevel.Information, Message = "AUDIT token issued: client {ClientId}, grant {GrantType}, subject {Subject}, tenant {TenantId}")]
     public static partial void TokenIssued(ILogger logger, string? clientId, string? grantType, string? subject, long? tenantId);
 

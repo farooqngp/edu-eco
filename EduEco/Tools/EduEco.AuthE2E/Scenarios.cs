@@ -42,6 +42,11 @@ internal sealed class Scenarios(Settings settings) : IDisposable
     private string? _apiConfirmationLink;
     private string? _apiAccessToken;
     private string? _apiRefreshToken;
+    private string? _platformAdminToken;
+    private string? _provisionedTenantCode;
+    private string? _provisionedAdminEmail;
+    private string? _setPasswordLink;
+    private const string ProvisionedAdminPassword = "E2e-Tenant-Admin-7Kx!";
 
     private string Issuer => _discovery.GetProperty("issuer").GetString()!;
 
@@ -115,12 +120,21 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         ]);
 
         await Section("J", "Angular SPA registration via EduEco.Api (invite-gated, ROPC)", [
-            ("J1", "Tenant admin issues a single-use invite (API)", IssueInviteAsync),
+            ("J1", "Tenant admin issues a single-use invite (API) → code emailed to the invitee", IssueInviteAsync),
             ("J2", "Register via API with the invite → confirmation email in Mailpit", ApiRegisterAsync),
             ("J3", "Reusing the same single-use invite is rejected", InviteReuseRejectedAsync),
             ("J4", "Confirm email address from the emailed link", ApiConfirmEmailAsync),
             ("J5", "Login via API (ROPC) issues tokens; API proxies to the caller's own profile", ApiLoginAndProfileAsync),
             ("J6", "Refresh via API issues a new access token", ApiRefreshAsync),
+        ]);
+
+        await Section("K", "Tenant provisioning by a platform administrator (via EduEco.Api)", [
+            ("K1", "Platform admin signs in (ROPC) and gets a tenant-less, non-refreshable token", PlatformAdminSignInAsync),
+            ("K2", "Platform admin registers a tenant and its administrator", ProvisionTenantAsync),
+            ("K3", "The new administrator is emailed a set-password link", ProvisioningEmailAsync),
+            ("K4", "The emailed link sets the administrator's password", SetProvisionedPasswordAsync),
+            ("K5", "The new administrator signs in and administers their own tenant", ProvisionedAdminSignInAsync),
+            ("K6", "Re-registering the same tenant code is rejected", DuplicateTenantRejectedAsync),
         ]);
 
         return Summary();
@@ -627,25 +641,30 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var admin = await SignInMobileAsync(Settings.TenantAdmin, settings.DevUserPassword, key);
 
+        // The invitee address is also the address that registers in J2, which is the realistic flow.
+        _apiRegisteredEmail = $"e2e-api-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local";
         var body = await ApiAsync(HttpMethod.Post, "api/v1/invites", admin.AccessToken, HttpStatusCode.Created, key,
-            new { roleName = "Student", expiresAtUtc = DateTimeOffset.UtcNow.AddDays(7) });
+            new { roleName = "Student", expiresAtUtc = DateTimeOffset.UtcNow.AddDays(7), email = _apiRegisteredEmail });
         _inviteCode = body.GetProperty("code").GetString();
-        return $"invite {body.GetProperty("inviteId")}, expires {body.GetProperty("expiresAtUtc")}";
+
+        var mail = await _mail.WaitForBodyAsync(_apiRegisteredEmail, "invited", TimeSpan.FromSeconds(15));
+        Expect.That(mail.Contains(_inviteCode!, StringComparison.Ordinal), "invite code missing from the emailed invite");
+
+        return $"invite {body.GetProperty("inviteId")} emailed to {_apiRegisteredEmail}, expires {body.GetProperty("expiresAtUtc")}";
     }
 
     private async Task<string> ApiRegisterAsync()
     {
-        _apiRegisteredEmail = $"e2e-api-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local";
         var body = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/register", HttpStatusCode.Accepted, new
         {
             inviteCode = Expect.NotNull(_inviteCode, "prerequisite missing (J1)"),
-            email = _apiRegisteredEmail,
+            email = Expect.NotNull(_apiRegisteredEmail, "prerequisite missing (J1)"),
             displayName = "E2E API Student",
             password = ApiRegisteredPassword,
         });
         Expect.That(body.GetProperty("requiresEmailConfirmation").GetBoolean(), "expected requiresEmailConfirmation=true");
 
-        var link = await _mail.WaitForLinkAsync(_apiRegisteredEmail, "Confirm", TimeSpan.FromSeconds(15));
+        var link = await _mail.WaitForLinkAsync(_apiRegisteredEmail!, "Confirm", TimeSpan.FromSeconds(15));
         _apiConfirmationLink = link.ToString();
         return $"{_apiRegisteredEmail} registered, confirmation link received";
     }
@@ -694,6 +713,135 @@ internal sealed class Scenarios(Settings settings) : IDisposable
         var newAccessToken = body.GetProperty("accessToken").GetString();
         Expect.That(!string.IsNullOrEmpty(newAccessToken), "no access token in refresh response");
         return "refreshed access token issued";
+    }
+
+    // ───────────────────────────── K. Tenant provisioning ─────────────────────────────
+
+    private async Task<string> PlatformAdminSignInAsync()
+    {
+        // Deliberately ROPC and not the browser flow: a platform admin has access to every tenant, so the
+        // authorization endpoint always shows the tenant picker for them. The password grant issues a tenant-less
+        // principal instead, which is the only way to administer tenants before any tenant exists.
+        var login = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/login", HttpStatusCode.OK, new
+        {
+            identifier = Settings.PlatformAdmin,
+            password = settings.DevUserPassword,
+        });
+
+        _platformAdminToken = login.GetProperty("accessToken").GetString();
+        Expect.That(!string.IsNullOrEmpty(_platformAdminToken), "no access token for the platform admin");
+
+        // The most privileged token in the system is never refreshable: it cannot be silently extended.
+        Expect.That(login.GetProperty("refreshToken").ValueKind == JsonValueKind.Null,
+            "the tenant-less platform-admin token must not carry a refresh token");
+
+        var me = await ApiAsync(HttpMethod.Get, "api/v1/me", _platformAdminToken!, HttpStatusCode.OK);
+        Expect.That(me.GetProperty("tenantId").ValueKind == JsonValueKind.Null, "expected no tenant on the platform-admin token");
+        var permissions = me.GetProperty("effectivePermissions").EnumerateArray().Select(p => p.GetString()).ToArray();
+        Expect.That(permissions.Contains("tenants.manage"), "platform admin lacks tenants.manage");
+
+        return $"tenant-less token, permissions [{string.Join(", ", permissions)}]";
+    }
+
+    private async Task<string> ProvisionTenantAsync()
+    {
+        var token = Expect.NotNull(_platformAdminToken, "prerequisite missing (K1)");
+        _provisionedTenantCode = $"e2e-school-{Guid.NewGuid():N}"[..24];
+        _provisionedAdminEmail = $"e2e-head-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local";
+
+        var body = await ApiAsync(HttpMethod.Post, "api/v1/tenants", token, HttpStatusCode.Created, json: new
+        {
+            code = _provisionedTenantCode,
+            name = "E2E Test Academy",
+            adminEmail = _provisionedAdminEmail,
+            adminDisplayName = "E2E Head Teacher",
+        });
+
+        Expect.That(body.GetProperty("invitationSent").GetBoolean(), "expected invitationSent=true for a brand-new administrator");
+        // Credentials must never travel in an API response; the administrator sets their own password.
+        Expect.That(!body.TryGetProperty("password", out _), "the response must not contain a password");
+
+        return $"tenant {body.GetProperty("id")} ({_provisionedTenantCode}), admin user {body.GetProperty("adminUserId")}";
+    }
+
+    private async Task<string> ProvisioningEmailAsync()
+    {
+        var email = Expect.NotNull(_provisionedAdminEmail, "prerequisite missing (K2)");
+        // The set-password link is deliberately the first link in the body, ahead of the sign-in URL.
+        var link = await _mail.WaitForLinkAsync(email, "administrator", TimeSpan.FromSeconds(15));
+        _setPasswordLink = link.ToString();
+
+        Expect.That(_setPasswordLink.Contains("/Account/ResetPassword", StringComparison.Ordinal),
+            $"expected a set-password link, got {Expect.Trim(_setPasswordLink)}");
+
+        return "set-password link received";
+    }
+
+    private async Task<string> SetProvisionedPasswordAsync()
+    {
+        var link = new Uri(Expect.NotNull(_setPasswordLink, "prerequisite missing (K3)"));
+
+        using var browser = new Browser(settings.Identity);
+        using var response = await browser.PostFormAsync(link, new Dictionary<string, string>
+        {
+            ["userId"] = Expect.NotNull(Query.Get(link, "userId"), "no userId on the set-password link"),
+            ["code"] = Expect.NotNull(Query.Get(link, "code"), "no code on the set-password link"),
+            ["password"] = ProvisionedAdminPassword,
+            ["confirmPassword"] = ProvisionedAdminPassword,
+        });
+
+        var html = await response.Content.ReadAsStringAsync();
+        Expect.That(html.Contains("Your password has been reset", StringComparison.Ordinal),
+            "the set-password page did not confirm the reset");
+
+        return "password set by the invitee";
+    }
+
+    private async Task<string> ProvisionedAdminSignInAsync()
+    {
+        var email = Expect.NotNull(_provisionedAdminEmail, "prerequisite missing (K2)");
+        var login = await AuthApiAsync(HttpMethod.Post, "api/v1/auth/login", HttpStatusCode.OK, new
+        {
+            identifier = email,
+            password = ProvisionedAdminPassword,
+        });
+
+        var token = login.GetProperty("accessToken").GetString()!;
+        var me = await ApiAsync(HttpMethod.Get, "api/v1/me", token, HttpStatusCode.OK);
+
+        var roles = me.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ToArray();
+        Expect.That(roles.Contains("TenantAdmin"), $"expected TenantAdmin, got [{string.Join(", ", roles)}]");
+        Expect.That(me.GetProperty("tenantId").ValueKind != JsonValueKind.Null, "the new administrator has no tenant");
+
+        var tenant = await ApiAsync(HttpMethod.Get, "api/v1/tenants/current", token, HttpStatusCode.OK);
+        Expect.That(tenant.GetProperty("code").GetString() == _provisionedTenantCode,
+            "the administrator is bound to the wrong tenant");
+
+        // Proves the membership really grants administration: issuing invites needs users.manage in this tenant.
+        await ApiAsync(HttpMethod.Post, "api/v1/invites", token, HttpStatusCode.Created, json: new
+        {
+            roleName = "Teacher",
+            expiresAtUtc = DateTimeOffset.UtcNow.AddDays(7),
+            email = $"e2e-hire-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local",
+        });
+
+        return $"signed in as TenantAdmin of {_provisionedTenantCode} and issued an invite";
+    }
+
+    private async Task<string> DuplicateTenantRejectedAsync()
+    {
+        var token = Expect.NotNull(_platformAdminToken, "prerequisite missing (K1)");
+        var code = Expect.NotNull(_provisionedTenantCode, "prerequisite missing (K2)");
+
+        await ApiAsync(HttpMethod.Post, "api/v1/tenants", token, HttpStatusCode.Conflict, json: new
+        {
+            code,
+            name = "Duplicate Academy",
+            adminEmail = $"e2e-dupe-{Guid.NewGuid():N}"[..20] + "@demo.eduEco.local",
+            adminDisplayName = "Duplicate Head",
+        });
+
+        return "duplicate tenant code rejected";
     }
 
     // ───────────────────────────── helpers ─────────────────────────────

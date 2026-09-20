@@ -55,6 +55,44 @@ public sealed class TokenPrincipalFactory(
         return await FinishAsync(identity, scopes, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Principal for a platform administrator acting outside any tenant: no <c>tenant_id</c> claim and global roles
+    /// only. Needed because a platform admin may have no tenant to select at all (provisioning the first one), and
+    /// <c>tenants.manage</c> is declared <c>TenantScoped: false</c> precisely so it does not require one.
+    /// <para>
+    /// <c>offline_access</c> is stripped here rather than at the call site: this is the most privileged token shape
+    /// in the system, so it is never refreshable and the session cannot be silently extended. Every tenant-scoped
+    /// permission still fails <c>tenant_required</c> at the API, which keeps the token narrow.
+    /// </para>
+    /// </summary>
+    public async Task<ClaimsPrincipal> CreateForPlatformAdminAsync(
+        ApplicationUser user,
+        ImmutableArray<string> scopes,
+        DateTimeOffset sessionStarted,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        var roles = (await userManager.GetRolesAsync(user).ConfigureAwait(false))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToImmutableArray();
+
+        var identity = new ClaimsIdentity(AuthenticationType, Claims.Name, Claims.Role);
+        identity.SetClaim(Claims.Subject, user.Id.ToString(CultureInfo.InvariantCulture))
+            .SetClaim(Claims.Name, user.DisplayName ?? user.UserName)
+            .SetClaim(Claims.PreferredUsername, user.UserName)
+            .SetClaim(Claims.Email, user.Email)
+            .SetClaim(Claims.EmailVerified, user.EmailConfirmed)
+            .SetClaims(Claims.Role, roles)
+            .SetClaim(SecurityStampClaim, await userManager.GetSecurityStampAsync(user).ConfigureAwait(false))
+            .SetClaim(SessionStartedClaim, sessionStarted.ToUnixTimeSeconds());
+
+        var withoutOfflineAccess = scopes
+            .Where(s => !string.Equals(s, Scopes.OfflineAccess, StringComparison.Ordinal))
+            .ToImmutableArray();
+
+        return await FinishAsync(identity, withoutOfflineAccess, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<ClaimsPrincipal> CreateForClientAsync(
         string clientId,
         string? displayName,

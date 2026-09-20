@@ -60,14 +60,21 @@ internal sealed partial class PermissionAuthorizationHandler(
 
         // 2b. Users: permission resolved server-side for (user, tenant). Global roles (PlatformAdmin) apply in any tenant.
         var userId = user.GetUserId();
-        if (userId is null || tenantId is null)
+        if (userId is null)
         {
             Deny(context, AuthorizationFailureCodes.PermissionDenied, requirement);
             return;
         }
 
         var cancellationToken = (context.Resource as HttpContext)?.RequestAborted ?? CancellationToken.None;
-        if (await permissionService.HasPermissionAsync(userId.Value, tenantId.Value, definition.Name, cancellationToken))
+
+        // A null tenant only reaches here for TenantScoped:false permissions — the check above denied the rest —
+        // so it resolves from global roles alone (a platform admin provisioning the first tenant has no tenant yet).
+        var granted = tenantId is null
+            ? await permissionService.HasGlobalPermissionAsync(userId.Value, definition.Name, cancellationToken)
+            : await permissionService.HasPermissionAsync(userId.Value, tenantId.Value, definition.Name, cancellationToken);
+
+        if (granted)
         {
             context.Succeed(requirement);
         }

@@ -3,6 +3,7 @@ using EduEco.Application.Invites;
 using EduEco.Application.Memberships;
 using EduEco.Application.Profiles;
 using EduEco.Infrastructure.Authorization;
+using EduEco.Infrastructure.Email;
 using EduEco.Infrastructure.Queries;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,8 @@ public static class AuthorizationExtensions
         services.TryAddScoped<IMembershipQueries, MembershipQueries>();
         services.TryAddScoped<MembershipService>();
 
+        services.AddOptions<SmtpOptions>().Bind(configuration.GetSection(SmtpOptions.SectionName));
+        services.TryAddScoped<IInviteEmailSender, SmtpInviteEmailSender>();
         services.TryAddScoped<IInviteQueries, InviteQueries>();
         services.TryAddScoped<InviteService>();
 

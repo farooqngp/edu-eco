@@ -6,7 +6,7 @@ using EduEco.Core.Authorization;
 
 namespace EduEco.Application.Invites;
 
-public sealed record CreateInviteCommand(string RoleName, DateTimeOffset ExpiresAtUtc, int MaxUses = 1);
+public sealed record CreateInviteCommand(string RoleName, DateTimeOffset ExpiresAtUtc, string Email, int MaxUses = 1);
 
 public sealed record InviteIssued(long InviteId, string Code, DateTimeOffset ExpiresAtUtc);
 
@@ -22,6 +22,7 @@ public sealed record InviteRedemption(long InviteId, long TenantId, string RoleN
 public sealed class InviteService(
     ICommandRepository<TenantInvite> invites,
     IInviteQueries inviteQueries,
+    IInviteEmailSender inviteEmailSender,
     TimeProvider timeProvider)
 {
     /// <summary>Same roles a tenant admin can grant directly via membership creation.</summary>
@@ -51,6 +52,7 @@ public sealed class InviteService(
         {
             CodeHash = Hash(code),
             RoleId = Roles.All.Single(r => r.Name == command.RoleName).Id,
+            InviteeEmail = command.Email,
             ExpiresAtUtc = command.ExpiresAtUtc,
             MaxUses = command.MaxUses,
         };
@@ -64,6 +66,9 @@ public sealed class InviteService(
             // A colliding 80-bit code hash is astronomically unlikely; treat it as a transient failure to retry.
             return Result<InviteIssued>.Fail(ResultError.Conflict, "Could not generate a unique invite code; try again.");
         }
+
+        // Best-effort by contract (see IInviteEmailSender): never throws, so a delivery failure cannot undo issuance.
+        await inviteEmailSender.SendInviteAsync(command.Email, code, command.RoleName, invite.ExpiresAtUtc, cancellationToken).ConfigureAwait(false);
 
         return Result<InviteIssued>.Ok(new InviteIssued(invite.Id, code, invite.ExpiresAtUtc));
     }

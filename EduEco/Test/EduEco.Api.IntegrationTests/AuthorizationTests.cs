@@ -185,4 +185,74 @@ public sealed class AuthorizationTests(ApiFixture fixture)
             endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().ShouldNotBeEmpty($"{endpoint.DisplayName} must declare [Authorize] or [HasPermission]");
         }
     }
+
+    // ── Tenant-less tokens ────────────────────────────────────────────────────────────────────────────
+    // A platform admin may hold a token bound to no tenant at all (there may not be one yet when they are
+    // provisioning the first school). Permissions declared TenantScoped:false must still resolve for them, and
+    // everything else must keep failing closed.
+
+    private static Dictionary<string, object> TenantlessClaims(long userId, string scope, params string[] roles) =>
+        new()
+        {
+            ["sub"] = userId.Invariant(),
+            ["client_id"] = ApiFixture.WebClientId,
+            ["scope"] = scope,
+            ["role"] = roles,
+        };
+
+    [Fact]
+    public async Task A_non_tenant_scoped_permission_resolves_from_global_roles_without_a_tenant()
+    {
+        var admin = await fixture.CreateUserAsync($"tenantless-admin-{Guid.NewGuid():N}", memberships: null, Roles.PlatformAdmin);
+        var token = TestTokens.Mint(fixture.SigningCertificate, TenantlessClaims(admin.Id, $"{Scopes.ApiRead} {Scopes.ApiWrite}", Roles.PlatformAdmin));
+        using var client = fixture.CreateApiClient(token);
+
+        // tenants.manage is the one TenantScoped:false permission, so listing tenants works with no tenant claim.
+        (await client.GetAsync("api/v1/tenants", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task A_tenant_scoped_permission_still_requires_a_tenant()
+    {
+        var admin = await fixture.CreateUserAsync($"tenantless-scoped-{Guid.NewGuid():N}", memberships: null, Roles.PlatformAdmin);
+        var token = TestTokens.Mint(fixture.SigningCertificate, TenantlessClaims(admin.Id, $"{Scopes.ApiRead} {Scopes.ApiWrite}", Roles.PlatformAdmin));
+        using var client = fixture.CreateApiClient(token);
+
+        using var response = await client.GetAsync("api/v1/memberships", Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await AuthenticationTests.ProblemCodeAsync(response)).ShouldBe(AuthorizationFailureCodes.TenantRequired);
+    }
+
+    [Fact]
+    public async Task A_tenantless_token_without_the_global_grant_is_denied()
+    {
+        var student = await fixture.CreateUserAsync($"tenantless-student-{Guid.NewGuid():N}", [(fixture.TenantAlpha, Roles.Student)]);
+        var token = TestTokens.Mint(fixture.SigningCertificate, TenantlessClaims(student.Id, $"{Scopes.ApiRead} {Scopes.ApiWrite}", Roles.Student));
+        using var client = fixture.CreateApiClient(token);
+
+        using var response = await client.GetAsync("api/v1/tenants", Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await AuthenticationTests.ProblemCodeAsync(response)).ShouldBe(AuthorizationFailureCodes.PermissionDenied);
+    }
+
+    [Fact]
+    public async Task Authorize_only_endpoints_tolerate_a_tenantless_token()
+    {
+        var admin = await fixture.CreateUserAsync($"tenantless-me-{Guid.NewGuid():N}", memberships: null, Roles.PlatformAdmin);
+        var token = TestTokens.Mint(fixture.SigningCertificate, TenantlessClaims(admin.Id, $"{Scopes.ApiRead} {Scopes.ApiWrite}", Roles.PlatformAdmin));
+        using var client = fixture.CreateApiClient(token);
+
+        // /me has no [HasPermission] to stop it early, so it must handle the missing tenant itself rather than fault.
+        using var me = await client.GetAsync("api/v1/me", Ct);
+        me.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await me.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        body.GetProperty("tenantId").ValueKind.ShouldBe(JsonValueKind.Null);
+        body.GetProperty("effectivePermissions").EnumerateArray().Select(p => p.GetString())
+            .ShouldContain(Permissions.Tenants.Manage, "the SPA gates the admin page on this");
+
+        // GetCurrent is tenant-scoped, so it is refused — but as a mapped 4xx, never a 500.
+        ((int)(await client.GetAsync("api/v1/tenants/current", Ct)).StatusCode).ShouldBeInRange(400, 499);
+    }
 }

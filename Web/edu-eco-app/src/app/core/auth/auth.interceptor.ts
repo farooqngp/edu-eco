@@ -2,6 +2,7 @@ import { HttpErrorResponse, HttpInterceptorFn, HttpRequest } from '@angular/comm
 import { inject } from '@angular/core';
 import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthApi } from './auth-api';
+import { SessionStore } from './session-store';
 import { TokenStore } from './token-store';
 
 /**
@@ -10,6 +11,7 @@ import { TokenStore } from './token-store';
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const tokenStore = inject(TokenStore);
+  const sessionStore = inject(SessionStore);
   const authApi = inject(AuthApi);
 
   const withToken = (request: HttpRequest<unknown>, token: string | null) =>
@@ -31,6 +33,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         }),
         catchError((refreshError: unknown) => {
           tokenStore.clear();
+          sessionStore.clear();
           return throwError(() => refreshError);
         }),
       );

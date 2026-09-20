@@ -7,7 +7,10 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace EduEco.Api.Controllers;
 
-public sealed record CreateInviteRequest([Required] string RoleName, [Required] DateTimeOffset ExpiresAtUtc);
+public sealed record CreateInviteRequest(
+    [Required] string RoleName,
+    [Required] DateTimeOffset ExpiresAtUtc,
+    [Required, EmailAddress, StringLength(256)] string Email);
 
 public sealed record InviteResponse(long InviteId, string Code, DateTimeOffset ExpiresAtUtc)
 {
@@ -30,7 +33,7 @@ public sealed class InvitesController(InviteService inviteService) : ApiControll
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var result = await inviteService.IssueAsync(new CreateInviteCommand(request.RoleName, request.ExpiresAtUtc), cancellationToken);
+        var result = await inviteService.IssueAsync(new CreateInviteCommand(request.RoleName, request.ExpiresAtUtc, request.Email), cancellationToken);
         return result.Succeeded
             ? StatusCode(StatusCodes.Status201Created, InviteResponse.From(result.Value!))
             : ProblemFor(result);

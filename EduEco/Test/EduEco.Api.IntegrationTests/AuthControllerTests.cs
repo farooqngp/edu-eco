@@ -132,7 +132,10 @@ public sealed class AuthControllerTests(ApiFixture fixture)
         var admin = await fixture.CreateUserAsync($"auth-admin-{Guid.NewGuid():N}", [(fixture.TenantAlpha, Roles.TenantAdmin)]);
         using var client = fixture.CreateApiClient(await fixture.GetUserTokenAsync(admin));
 
-        using var response = await client.PostAsJsonAsync("api/v1/invites", new { RoleName = roleName, ExpiresAtUtc = DateTimeOffset.UtcNow.AddDays(7) }, Ct);
+        using var response = await client.PostAsJsonAsync(
+            "api/v1/invites",
+            new { RoleName = roleName, ExpiresAtUtc = DateTimeOffset.UtcNow.AddDays(7), Email = "invitee@example.com" },
+            Ct);
         response.StatusCode.ShouldBe(HttpStatusCode.Created, await response.Content.ReadAsStringAsync(Ct));
         return (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("code").GetString()!;
     }

@@ -299,7 +299,9 @@ public sealed class AuthorizationController(
     /// <summary>
     /// ROPC (RFC 6749 §4.3), permitted only for <c>eduEco-api-ropc</c> (see OpenIddictClientSeeder). No interactive UI is
     /// available here: 2FA/passkey-only accounts and users with more than one tenant cannot complete sign-in through this
-    /// grant and must use the browser (authorization-code) flow instead.
+    /// grant and must use the browser (authorization-code) flow instead. Platform administrators are the exception —
+    /// they get a tenant-less, non-refreshable principal so they can administer tenants (including the first one) from
+    /// the SPA; see <see cref="TokenPrincipalFactory.CreateForPlatformAdminAsync"/>.
     /// </summary>
     private async Task<IActionResult> ExchangePasswordAsync(OpenIddictRequest request, CancellationToken cancellationToken)
     {
@@ -319,6 +321,19 @@ public sealed class AuthorizationController(
             // Same error for unknown user, wrong password, unconfirmed email and 2FA-required accounts (no enumeration).
             AuditLog.SignInFailed(logger, "ropc", result.RequiresTwoFactor ? "requires-2fa" : result.IsNotAllowed ? "not-allowed" : "invalid-credentials");
             return Reject(request, Errors.InvalidGrant, "The username or password is incorrect.");
+        }
+
+        // A platform admin has access to every tenant, so SelectAsync can never pick one for them without an explicit
+        // code — and when provisioning the very first tenant there is nothing to pick. Issue a tenant-less principal
+        // instead (global roles only, no tenant_id, no refresh token); tenants.manage is TenantScoped:false so it works
+        // without a tenant, while every tenant-scoped permission still fails tenant_required at the API.
+        if (await tenantAccessResolver.IsPlatformAdminAsync(user!))
+        {
+            var adminPrincipal = await principalFactory.CreateForPlatformAdminAsync(user!, request.GetScopes(), timeProvider.GetUtcNow(), cancellationToken);
+
+            AuditLog.SignInSucceeded(logger, user!.Id, "ropc");
+            AuditLog.PlatformAdminTokenIssued(logger, request.ClientId, user.Id);
+            return SignIn(adminPrincipal, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         var selection = await tenantAccessResolver.SelectAsync(user!, requestedTenantCode: null, cancellationToken);

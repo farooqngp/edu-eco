@@ -46,6 +46,31 @@ public sealed class PermissionService(
         return names.ToHashSet(StringComparer.Ordinal);
     }
 
+    public async Task<bool> HasGlobalPermissionAsync(long userId, string permission, CancellationToken cancellationToken = default) =>
+        (await GetGlobalPermissionsAsync(userId, cancellationToken).ConfigureAwait(false)).Contains(permission);
+
+    public async Task<IReadOnlySet<string>> GetGlobalPermissionsAsync(long userId, CancellationToken cancellationToken = default)
+    {
+        string[] names;
+        if (_options.PermissionCacheDuration <= TimeSpan.Zero)
+        {
+            names = [.. await permissionQueries.GetGlobalPermissionNamesAsync(userId, cancellationToken).ConfigureAwait(false)];
+        }
+        else
+        {
+            // Tagged by user only (there is no tenant): InvalidateUserAsync already evicts it.
+            names = await cache.GetOrCreateAsync(
+                string.Create(CultureInfo.InvariantCulture, $"perm-global:{userId}"),
+                (permissionQueries, userId),
+                static async (state, ct) => (await state.permissionQueries.GetGlobalPermissionNamesAsync(state.userId, ct).ConfigureAwait(false)).ToArray(),
+                Entry(_options.PermissionCacheDuration),
+                [UserTag(userId)],
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return names.ToHashSet(StringComparer.Ordinal);
+    }
+
     public async Task<bool> IsActiveAsync(long tenantId, CancellationToken cancellationToken = default)
     {
         if (_options.TenantStatusCacheDuration <= TimeSpan.Zero)

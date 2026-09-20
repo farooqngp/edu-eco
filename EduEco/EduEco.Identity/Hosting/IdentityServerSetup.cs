@@ -52,7 +52,10 @@ internal static class IdentityServerSetup
         // Password reset / email confirmation links are single-purpose and short-lived.
         services.Configure<DataProtectionTokenProviderOptions>(tokens => tokens.TokenLifespan = TimeSpan.FromMinutes(30));
         services.AddOptions<Email.SmtpOptions>().Bind(configuration.GetSection(Email.SmtpOptions.SectionName));
-        services.TryAddSingleton<IEmailSender<ApplicationUser>, Email.SmtpEmailSender>();
+        // One sender instance behind both contracts: Identity's fixed IEmailSender<T> and our provisioning emails.
+        services.TryAddSingleton<Email.SmtpEmailSender>();
+        services.TryAddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<Email.SmtpEmailSender>());
+        services.TryAddSingleton<Email.IProvisioningEmailSender>(sp => sp.GetRequiredService<Email.SmtpEmailSender>());
 
         services.AddSingleton<Logout.BackchannelLogoutNotifier>();
         services.AddHostedService<Logout.BackchannelLogoutWorker>();
@@ -500,7 +503,8 @@ internal static class IdentityServerSetup
                     || path.StartsWithSegments("/Account/ResendEmailConfirmation", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWithSegments("/Account/Register", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWithSegments("/internal/registrations", StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWithSegments("/internal/password-resets", StringComparison.OrdinalIgnoreCase))
+                    || path.StartsWithSegments("/internal/password-resets", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWithSegments("/internal/tenant-admins", StringComparison.OrdinalIgnoreCase))
                 {
                     return FixedWindow($"login:{client}", options.RateLimits.LoginPermitsPerMinute);
                 }

@@ -30,6 +30,7 @@ public sealed class MigrationTests(SqlServerFixture fixture)
             "01_Migrations/V0007__bff_sessions.sql",
             "01_Migrations/V0008__tenant_invites.sql",
             "01_Migrations/V0009__user_profiles.sql",
+            "01_Migrations/V0010__tenant_invite_invitee_email.sql",
         ], ignoreOrder: true);
     }
 

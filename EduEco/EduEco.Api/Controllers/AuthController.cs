@@ -42,6 +42,7 @@ public sealed class AuthController(
     IdentityInternalClient identityClient,
     InviteService inviteService,
     IInviteQueries inviteQueries,
+    IInviteEmailSender inviteEmailSender,
     IDbSession dbSession,
     ICurrentUser currentUser,
     TimeProvider timeProvider,
@@ -125,6 +126,7 @@ public sealed class AuthController(
         var invites = new InviteService(
             new DapperCommandRepository<TenantInvite>(dbSession, tenantContext, currentUser, timeProvider, databaseOptions),
             inviteQueries,
+            inviteEmailSender, // unused by ConsumeAsync; required by the constructor
             timeProvider);
 
         var unitOfWork = (IUnitOfWork)dbSession;

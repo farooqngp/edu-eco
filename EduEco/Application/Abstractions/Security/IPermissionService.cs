@@ -6,6 +6,12 @@ public interface IPermissionService
     Task<bool> HasPermissionAsync(long userId, long tenantId, string permission, CancellationToken cancellationToken = default);
 
     Task<IReadOnlySet<string>> GetPermissionsAsync(long userId, long tenantId, CancellationToken cancellationToken = default);
+
+    /// <summary>Resolves a <c>TenantScoped: false</c> permission from global roles alone, for callers with no tenant.</summary>
+    Task<bool> HasGlobalPermissionAsync(long userId, string permission, CancellationToken cancellationToken = default);
+
+    /// <summary>Global-role permissions only; the tenant-less counterpart of <see cref="GetPermissionsAsync"/>.</summary>
+    Task<IReadOnlySet<string>> GetGlobalPermissionsAsync(long userId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Evicts cached authorization data after role/membership/tenant changes.</summary>
