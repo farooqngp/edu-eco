@@ -31,6 +31,7 @@ internal sealed partial class OpenIddictClientSeeder(
         (ApiScopes.ApiWrite, "Modify EduEco data", ApiResources.Api),
         (ApiScopes.ApiSync, "Bulk synchronisation (service-to-service)", ApiResources.Api),
         (ApiScopes.ReportingRead, "Read reports (delegated via token exchange)", ApiResources.Reporting),
+        (ApiScopes.IdentityInternal, "Call Identity's internal registration/password-reset endpoints (server-to-server)", ApiResources.IdentityInternal),
     ];
 
     public async Task SeedAsync(CancellationToken cancellationToken)
@@ -203,6 +204,10 @@ internal sealed partial class OpenIddictClientSeeder(
                     break;
                 case GrantTypes.TokenExchange when isConfidential:
                     descriptor.Permissions.Add(Permissions.GrantTypes.TokenExchange);
+                    break;
+                case GrantTypes.Password when isConfidential:
+                    // Confidential-only, server-to-server ROPC: never permitted for a public/browser client.
+                    descriptor.Permissions.Add(Permissions.GrantTypes.Password);
                     break;
                 default:
                     throw new InvalidOperationException($"Client '{clientId}': grant type '{grantType}' is not allowed.");

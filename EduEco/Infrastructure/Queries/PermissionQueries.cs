@@ -22,6 +22,22 @@ public sealed class PermissionQueries(IQueryExecutor queryExecutor) : IPermissio
         ORDER BY p.[Name];
         """;
 
+    /// <summary>Global roles only — no tenant membership branch. Backs <c>TenantScoped: false</c> permissions.</summary>
+    private const string GlobalSql = """
+        SELECT DISTINCT p.[Name]
+        FROM auth.Permissions p
+        INNER JOIN auth.RolePermissions rp ON rp.PermissionId = p.Id
+        WHERE EXISTS (SELECT 1 FROM auth.AspNetUsers u WHERE u.Id = @UserId AND u.IsActive = 1)
+          AND rp.RoleId IN (
+                SELECT ur.RoleId
+                FROM auth.AspNetUserRoles ur
+                WHERE ur.UserId = @UserId)
+        ORDER BY p.[Name];
+        """;
+
     public Task<IReadOnlyList<string>> GetPermissionNamesAsync(long userId, long tenantId, CancellationToken cancellationToken = default) =>
         queryExecutor.QueryAsync<string>(Sql, new { UserId = userId, TenantId = tenantId }, cancellationToken);
+
+    public Task<IReadOnlyList<string>> GetGlobalPermissionNamesAsync(long userId, CancellationToken cancellationToken = default) =>
+        queryExecutor.QueryAsync<string>(GlobalSql, new { UserId = userId }, cancellationToken);
 }

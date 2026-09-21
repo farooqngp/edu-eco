@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -44,6 +45,7 @@ public sealed class ApiFixture : IAsyncLifetime
     public const string TenantServiceClientId = "it-svc-alpha";
     public const string PlatformServiceClientId = "it-svc-platform";
     public const string ServiceClientSecret = "it-svc-secret-0123456789abcdefghij";
+    public const string RopcClientId = "it-api-ropc";
     public const string RedirectUri = "https://client.test/callback";
 
     private const string CertificatePassword = "it-cert-password";
@@ -64,6 +66,9 @@ public sealed class ApiFixture : IAsyncLifetime
     public WebApplicationFactory<MeController> ApiB => _apiB ?? throw new InvalidOperationException("Not initialised.");
 
     public X509Certificate2 SigningCertificate { get; private set; } = null!;
+
+    /// <summary>Stands in for the Identity host's account provisioning (see <see cref="ITenantAdminProvisioner"/>).</summary>
+    public FakeTenantAdminProvisioner Provisioner { get; } = new();
 
     public TenantSummary TenantAlpha { get; private set; } = null!;
 
@@ -94,8 +99,8 @@ public sealed class ApiFixture : IAsyncLifetime
         await SeedAsync(_identity.Services, apiClientPath);
 
         var redis = _redis.GetConnectionString();
-        _api = new ApiFactory(connectionString, _identity, redis, apiClientPath);
-        _apiB = new ApiFactory(connectionString, _identity, redis, apiClientPath);
+        _api = new ApiFactory(connectionString, _identity, redis, apiClientPath, Provisioner);
+        _apiB = new ApiFactory(connectionString, _identity, redis, apiClientPath, Provisioner);
     }
 
     public async ValueTask DisposeAsync()
@@ -202,6 +207,21 @@ public sealed class ApiFixture : IAsyncLifetime
         return tokens.AccessToken;
     }
 
+    public async Task<ApplicationUser?> FindUserByEmailAsync(string email)
+    {
+        await using var scope = Identity.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByEmailAsync(email);
+    }
+
+    public async Task ConfirmEmailAsync(string email)
+    {
+        await using var scope = Identity.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByEmailAsync(email) ?? throw new InvalidOperationException($"User '{email}' not found.");
+        var token = await users.GenerateEmailConfirmationTokenAsync(user);
+        Ensure(await users.ConfirmEmailAsync(user, token));
+    }
+
     private async Task SeedAsync(IServiceProvider services, string apiClientCertificatePath)
     {
         TenantAlpha = await CreateTenantAsync("alpha");
@@ -237,13 +257,26 @@ public sealed class ApiFixture : IAsyncLifetime
             Scopes = { Scopes.ApiRead },
         };
 
-        // Resource server client: private_key_jwt, introspection only.
+        // Resource server client: private_key_jwt, introspection + client-credentials into Identity's internal endpoints.
         seed.Clients[Resources.Api] = new ClientSeed
         {
             ClientType = "confidential",
             PublicKeyCertificatePath = apiClientCertificatePath,
             PublicKeyCertificatePassword = CertificatePassword,
             AllowIntrospection = true,
+            GrantTypes = { "client_credentials" },
+            Scopes = { Scopes.IdentityInternal },
+            Resources = { Resources.IdentityInternal },
+        };
+
+        // ROPC login/refresh, same cert as the resource server client (see OpenIddictClientSeeder for the production analogue).
+        seed.Clients[RopcClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = apiClientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { "password", "refresh_token" },
+            Scopes = { "openid", "profile", "email", "offline_access", Scopes.ApiRead, Scopes.ApiWrite },
         };
 
         await using var scope = services.CreateAsyncScope();
@@ -295,7 +328,12 @@ public sealed class ApiFixture : IAsyncLifetime
         }
     }
 
-    private sealed class ApiFactory(string connectionString, IdentityFactory identity, string redis, string apiClientCertificatePath)
+    private sealed class ApiFactory(
+        string connectionString,
+        IdentityFactory identity,
+        string redis,
+        string apiClientCertificatePath,
+        FakeTenantAdminProvisioner provisioner)
         : WebApplicationFactory<MeController>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -304,14 +342,21 @@ public sealed class ApiFixture : IAsyncLifetime
             builder.UseSetting("ConnectionStrings:EduEco", connectionString);
             builder.UseSetting("Authentication:Authority", Issuer);
             builder.UseSetting("Authentication:PermitsPerMinute", "100000");
+            builder.UseSetting("Authentication:AuthEndpointPermitsPerMinute", "100000");
             builder.UseSetting("AuthorizationCache:PermissionCacheDuration", "00:05:00");
             builder.UseSetting("AuthorizationCache:TenantStatusCacheDuration", "00:00:00");
             builder.UseSetting("ConnectionStrings:Redis", redis);
             builder.UseSetting("Authentication:Introspection:Enabled", "true");
             builder.UseSetting("Authentication:Introspection:CertificatePath", apiClientCertificatePath);
             builder.UseSetting("Authentication:Introspection:CertificatePassword", CertificatePassword);
+            builder.UseSetting("Authentication:RopcClientId", RopcClientId);
 
             builder.ConfigureTestServices(services =>
+            {
+                // Account creation lives in the Identity host; stubbing the port keeps these tests on the Api's own
+                // orchestration (code pre-check, membership attach, replay safety) instead of a cross-service call.
+                services.AddSingleton<ITenantAdminProvisioner>(provisioner);
+
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
                     // Route discovery/JWKS requests to the in-memory Identity server.
@@ -320,7 +365,8 @@ public sealed class ApiFixture : IAsyncLifetime
                         new Uri(new Uri(Issuer), ".well-known/openid-configuration").ToString(),
                         new OpenIdConnectConfigurationRetriever(),
                         new HttpDocumentRetriever(options.Backchannel) { RequireHttps = true });
-                }));
+                });
+            });
         }
     }
 
@@ -345,4 +391,44 @@ public sealed class ApiCollection : ICollectionFixture<ApiFixture>
 internal static class InvariantExtensions
 {
     public static string Invariant(this long value) => value.ToString(CultureInfo.InvariantCulture);
+}
+
+/// <summary>
+/// Fake for the Identity-hosted account provisioning. Hands out ascending user ids, records what it was asked for,
+/// and can be told to report an existing account or a validation failure.
+/// </summary>
+public sealed class FakeTenantAdminProvisioner : ITenantAdminProvisioner
+{
+    public ConcurrentQueue<(string Email, string DisplayName, string TenantName)> Calls { get; } = new();
+
+    public AdminProvisionOutcome NextOutcome { get; set; } = AdminProvisionOutcome.Created;
+
+    /// <summary>
+    /// The id to hand back. Must be a real <c>auth.AspNetUsers</c> row: in production Identity has genuinely created
+    /// the account by this point, and the membership insert has a foreign key to it. Tests set it with
+    /// <see cref="ApiFixture.CreateUserAsync"/>.
+    /// </summary>
+    public long? NextUserId { get; set; }
+
+    public Task<AdminProvisionResult> ProvisionAsync(string email, string displayName, string tenantName, CancellationToken cancellationToken = default)
+    {
+        Calls.Enqueue((email, displayName, tenantName));
+
+        if (NextOutcome == AdminProvisionOutcome.ValidationFailed)
+        {
+            return Task.FromResult(new AdminProvisionResult(NextOutcome, null, ["The administrator account could not be created."]));
+        }
+
+        var userId = NextUserId
+            ?? throw new InvalidOperationException($"{nameof(NextUserId)} must be set to an existing user id before provisioning.");
+
+        return Task.FromResult(new AdminProvisionResult(NextOutcome, userId, []));
+    }
+
+    public void Reset()
+    {
+        Calls.Clear();
+        NextOutcome = AdminProvisionOutcome.Created;
+        NextUserId = null;
+    }
 }

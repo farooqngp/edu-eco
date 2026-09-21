@@ -11,6 +11,9 @@
 *.sln.docstates
 *.env
 
+# Claude Code: personal tool preferences, not shared config (.claude/launch.json is shared and stays tracked)
+.claude/settings.local.json
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
@@ -430,3 +433,6 @@ FodyWeavers.xsd
 
 # Local development certificates (tools/New-DevCertificates.ps1)
 certs/
+
+# Superdesign scratch (canvas drafts, resume state, generated init context)
+.superdesign/

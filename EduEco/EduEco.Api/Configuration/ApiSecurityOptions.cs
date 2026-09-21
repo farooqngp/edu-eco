@@ -27,6 +27,15 @@ public sealed class ApiSecurityOptions
     /// <summary>Per client (client_id, else IP) request budget.</summary>
     public int PermitsPerMinute { get; set; } = 600;
 
+    /// <summary>Tighter, IP-keyed budget for the anonymous register/login/forgot-password endpoints (credential guessing).</summary>
+    public int AuthEndpointPermitsPerMinute { get; set; } = 10;
+
+    /// <summary>Confidential, server-to-server-only OAuth client for ROPC login/refresh (see OpenIddictClientSeeder).</summary>
+    public string RopcClientId { get; set; } = "eduEco-api-ropc";
+
+    /// <summary>Angular (or other SPA) origins allowed to call this API directly, e.g. https://localhost:4200.</summary>
+    public List<string> AllowedSpaOrigins { get; init; } = [];
+
     public IntrospectionOptions Introspection { get; init; } = new();
 }
 

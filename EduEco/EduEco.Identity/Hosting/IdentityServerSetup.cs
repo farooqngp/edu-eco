@@ -10,12 +10,14 @@ using Microsoft.AspNetCore;
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
+using OpenIddict.Validation.AspNetCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using ApiScopes = EduEco.Core.Authorization.Scopes;
+using ApiResources = EduEco.Core.Authorization.Resources;
 using EduEcoClaimTypes = EduEco.Core.Authorization.EduEcoClaimTypes;
 
 namespace EduEco.Identity.Hosting;
@@ -50,7 +52,10 @@ internal static class IdentityServerSetup
         // Password reset / email confirmation links are single-purpose and short-lived.
         services.Configure<DataProtectionTokenProviderOptions>(tokens => tokens.TokenLifespan = TimeSpan.FromMinutes(30));
         services.AddOptions<Email.SmtpOptions>().Bind(configuration.GetSection(Email.SmtpOptions.SectionName));
-        services.TryAddSingleton<IEmailSender<ApplicationUser>, Email.SmtpEmailSender>();
+        // One sender instance behind both contracts: Identity's fixed IEmailSender<T> and our provisioning emails.
+        services.TryAddSingleton<Email.SmtpEmailSender>();
+        services.TryAddSingleton<IEmailSender<ApplicationUser>>(sp => sp.GetRequiredService<Email.SmtpEmailSender>());
+        services.TryAddSingleton<Email.IProvisioningEmailSender>(sp => sp.GetRequiredService<Email.SmtpEmailSender>());
 
         services.AddSingleton<Logout.BackchannelLogoutNotifier>();
         services.AddHostedService<Logout.BackchannelLogoutWorker>();
@@ -65,6 +70,7 @@ internal static class IdentityServerSetup
 
         AddCookiesAndDataProtection(services, configuration, options, environment, certificates);
         AddOpenIddictServer(services, options, environment, certificates);
+        AddInternalApiAuthentication(services);
         AddRateLimiting(services, options);
 
         services.Configure<ForwardedHeadersOptions>(forwarded =>
@@ -148,6 +154,7 @@ internal static class IdentityServerSetup
         app.UseStatusCodePagesWithReExecute("/Error");
         app.UseStaticFiles();
         app.UseRouting();
+        app.Use(PeekTokenGrantType);
         app.UseRateLimiter();
         app.UseAuthentication();
         app.UseAuthorization();
@@ -277,6 +284,31 @@ internal static class IdentityServerSetup
         }
     }
 
+    internal const string IdentityInternalScopePolicy = "IdentityInternalScope";
+
+    /// <summary>
+    /// Identity validates its own self-issued tokens in-process (no HTTP discovery round-trip to itself, and no cert/JWKS
+    /// wiring per <see cref="CredentialMode"/>) via OpenIddict's local validation handler, restricted to the
+    /// "identity.internal" audience so a normal user/API access token can never pass this check.
+    /// </summary>
+    private static void AddInternalApiAuthentication(IServiceCollection services)
+    {
+        services.AddOpenIddict()
+            .AddValidation(validation =>
+            {
+                validation.UseLocalServer();
+                validation.UseAspNetCore();
+                validation.AddAudiences(ApiResources.IdentityInternal);
+            });
+
+        services.AddAuthorizationBuilder()
+            .AddPolicy(IdentityInternalScopePolicy, policy => policy
+                .AddAuthenticationSchemes(OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme)
+                .RequireAssertion(context => context.User.FindAll("scope")
+                    .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    .Contains(ApiScopes.IdentityInternal, StringComparer.Ordinal)));
+    }
+
     private static void AddOpenIddictServer(
         IServiceCollection services, IdentityServerOptions options, IHostEnvironment environment, CertificateLoader certificates)
     {
@@ -294,17 +326,20 @@ internal static class IdentityServerSetup
                     .SetPushedAuthorizationEndpointUris("connect/par");
 
                 // OAuth 2.1 / RFC 9700: code + PKCE (S256) for users, client credentials for services,
-                // token exchange (RFC 8693) for delegation. Implicit, hybrid, password (ROPC) and device flows stay off.
+                // token exchange (RFC 8693) for delegation. Implicit, hybrid and device flows stay off.
+                // Password (ROPC) is on for exactly one confidential, server-to-server-only client (eduEco-api-ropc) so
+                // the Angular SPA's registration/login pages can go through EduEco.Api instead of a browser redirect.
                 server.AllowAuthorizationCodeFlow()
                     .RequireProofKeyForCodeExchange()
                     .AllowClientCredentialsFlow()
                     .AllowRefreshTokenFlow()
-                    .AllowTokenExchangeFlow();
+                    .AllowTokenExchangeFlow()
+                    .AllowPasswordFlow();
 
                 server.Configure(o => o.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain));
 
                 server.RegisterScopes(Scopes.OpenId, Scopes.Profile, Scopes.Email, Scopes.OfflineAccess,
-                    ApiScopes.ApiRead, ApiScopes.ApiWrite, ApiScopes.ApiSync, ApiScopes.ReportingRead);
+                    ApiScopes.ApiRead, ApiScopes.ApiWrite, ApiScopes.ApiSync, ApiScopes.ReportingRead, ApiScopes.IdentityInternal);
                 server.RegisterClaims(Claims.Subject, Claims.Name, Claims.PreferredUsername, Claims.Email, Claims.EmailVerified,
                     Claims.Role, EduEcoClaimTypes.TenantId, DPoPConstants.ConfirmationClaim, Controllers.AuthorizationController.ActorClaim);
 
@@ -407,6 +442,28 @@ internal static class IdentityServerSetup
             });
     }
 
+    private const string TokenGrantTypeItem = "EduEco.TokenGrantType";
+
+    /// <summary>
+    /// Reads <c>grant_type</c> from a <c>/connect/token</c> POST body ahead of the rate limiter, so a password-grant
+    /// request (credential guessing) is partitioned like every other password-entry surface instead of the much
+    /// looser token-refresh/client-credentials budget. Buffers and rewinds the body; OpenIddict re-reads it normally.
+    /// </summary>
+    private static async Task PeekTokenGrantType(HttpContext context, Func<Task> next)
+    {
+        if (HttpMethods.IsPost(context.Request.Method)
+            && context.Request.Path.StartsWithSegments("/connect/token", StringComparison.OrdinalIgnoreCase)
+            && context.Request.HasFormContentType)
+        {
+            context.Request.EnableBuffering();
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            context.Items[TokenGrantTypeItem] = form["grant_type"].ToString();
+            context.Request.Body.Position = 0;
+        }
+
+        await next();
+    }
+
     private static void AddRateLimiting(IServiceCollection services, IdentityServerOptions options)
     {
         services.AddRateLimiter(limiter =>
@@ -421,6 +478,13 @@ internal static class IdentityServerSetup
 
                 var client = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
                 var path = context.Request.Path;
+
+                // Password-grant requests are credential guesses, not routine token refresh/client-credentials traffic.
+                if (path.StartsWithSegments("/connect/token", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(context.Items[TokenGrantTypeItem] as string, GrantTypes.Password, StringComparison.Ordinal))
+                {
+                    return FixedWindow($"login:{client}", options.RateLimits.LoginPermitsPerMinute);
+                }
 
                 if (path.StartsWithSegments("/connect/token", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWithSegments("/connect/par", StringComparison.OrdinalIgnoreCase)
@@ -437,7 +501,10 @@ internal static class IdentityServerSetup
                     || path.StartsWithSegments("/Account/ForgotPassword", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWithSegments("/Account/ResetPassword", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWithSegments("/Account/ResendEmailConfirmation", StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWithSegments("/Account/Register", StringComparison.OrdinalIgnoreCase))
+                    || path.StartsWithSegments("/Account/Register", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWithSegments("/internal/registrations", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWithSegments("/internal/password-resets", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWithSegments("/internal/tenant-admins", StringComparison.OrdinalIgnoreCase))
                 {
                     return FixedWindow($"login:{client}", options.RateLimits.LoginPermitsPerMinute);
                 }

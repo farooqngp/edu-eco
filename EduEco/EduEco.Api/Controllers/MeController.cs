@@ -36,9 +36,13 @@ public sealed class MeController(IPermissionService permissionService) : ApiCont
         {
             candidates = candidates.Where(p => p.AllowServiceClients);
         }
-        else if (userId is not null && tenantId is not null)
+        else if (userId is not null)
         {
-            var granted = await permissionService.GetPermissionsAsync(userId.Value, tenantId.Value, cancellationToken);
+            // No tenant (a platform admin acting outside any tenant): resolve from global roles alone. The candidate
+            // filter above has already dropped every TenantScoped permission in that case.
+            var granted = tenantId is null
+                ? await permissionService.GetGlobalPermissionsAsync(userId.Value, cancellationToken)
+                : await permissionService.GetPermissionsAsync(userId.Value, tenantId.Value, cancellationToken);
             candidates = candidates.Where(p => granted.Contains(p.Name));
         }
         else

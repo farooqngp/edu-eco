@@ -29,8 +29,9 @@ public sealed class SmtpOptions
     public string FromName { get; set; } = "EduEco";
 }
 
-/// <summary>Identity account emails (confirmation, password reset) over SMTP.</summary>
-public sealed partial class SmtpEmailSender(IOptions<SmtpOptions> options, ILogger<SmtpEmailSender> logger) : IEmailSender<ApplicationUser>
+/// <summary>Identity account emails (confirmation, password reset, admin provisioning) over SMTP.</summary>
+public sealed partial class SmtpEmailSender(IOptions<SmtpOptions> options, ILogger<SmtpEmailSender> logger)
+    : IEmailSender<ApplicationUser>, IProvisioningEmailSender
 {
     public Task SendConfirmationLinkAsync(ApplicationUser user, string email, string confirmationLink) =>
         SendAsync(email, "Confirm your EduEco email address",
@@ -44,7 +45,43 @@ public sealed partial class SmtpEmailSender(IOptions<SmtpOptions> options, ILogg
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) =>
         throw new NotSupportedException("Code-based password reset is not used; links are sent instead.");
 
+    public Task SendTenantAdminInvitationAsync(ApplicationUser user, string email, string tenantName, string setPasswordLink, string loginUrl) =>
+        // The set-password link deliberately comes first: it is the only way into the account, and the E2E Mailpit
+        // helper extracts the first link in the text body.
+        SendBodyAsync(email, $"You are the administrator for {tenantName} on EduEco",
+            $"An EduEco account has been created for you as the administrator of {tenantName}.\n\n"
+            + $"Set your password using this link (valid 30 minutes):\n{setPasswordLink}\n\n"
+            + $"Afterwards, sign in here:\n{loginUrl}\n",
+            [("Set your password (valid 30 minutes)", setPasswordLink), ("Sign in", loginUrl)]);
+
+    public Task SendTenantAdminGrantedAsync(ApplicationUser user, string email, string tenantName, string loginUrl) =>
+        SendBodyAsync(email, $"You are now an administrator for {tenantName} on EduEco",
+            $"Your existing EduEco account has been granted administration of {tenantName}.\n\n"
+            + $"Sign in with your usual password here:\n{loginUrl}\n",
+            [("Sign in", loginUrl)]);
+
+    private async Task SendBodyAsync(string to, string subject, string textBody, (string Label, string Url)[] links)
+    {
+        var paragraphs = string.Join(string.Empty, textBody.Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => $"<p>{WebUtility.HtmlEncode(p.Split('\n')[0])}</p>"));
+        var anchors = string.Join(string.Empty, links.Select(l =>
+            $"<p><a href=\"{WebUtility.HtmlEncode(l.Url)}\">{WebUtility.HtmlEncode(l.Label)}</a></p>"));
+
+        await DeliverAsync(to, subject, textBody, paragraphs + anchors).ConfigureAwait(false);
+    }
+
     private async Task SendAsync(string to, string subject, string intro, string link)
+    {
+        var encodedLink = WebUtility.HtmlEncode(link);
+        await DeliverAsync(
+            to,
+            subject,
+            $"{intro}\n\n{link}\n",
+            $"<p>{WebUtility.HtmlEncode(intro)}</p><p><a href=\"{encodedLink}\">{encodedLink}</a></p>").ConfigureAwait(false);
+    }
+
+    /// <summary>Single delivery path for every email; an empty host disables delivery (logged, not sent).</summary>
+    private async Task DeliverAsync(string to, string subject, string textBody, string htmlBody)
     {
         var settings = options.Value;
         if (string.IsNullOrWhiteSpace(settings.Host))
@@ -57,13 +94,7 @@ public sealed partial class SmtpEmailSender(IOptions<SmtpOptions> options, ILogg
         message.From.Add(new MailboxAddress(settings.FromName, settings.FromAddress));
         message.To.Add(MailboxAddress.Parse(to));
         message.Subject = subject;
-
-        var encodedLink = WebUtility.HtmlEncode(link);
-        message.Body = new BodyBuilder
-        {
-            TextBody = $"{intro}\n\n{link}\n",
-            HtmlBody = $"<p>{WebUtility.HtmlEncode(intro)}</p><p><a href=\"{encodedLink}\">{encodedLink}</a></p>",
-        }.ToMessageBody();
+        message.Body = new BodyBuilder { TextBody = textBody, HtmlBody = htmlBody }.ToMessageBody();
 
         using var client = new SmtpClient();
         await client.ConnectAsync(settings.Host, settings.Port, settings.Security).ConfigureAwait(false);

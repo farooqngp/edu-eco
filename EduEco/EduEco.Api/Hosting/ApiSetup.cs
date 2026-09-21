@@ -2,7 +2,9 @@ using System.Threading.RateLimiting;
 using EduEco.Api.Configuration;
 using EduEco.Api.Security;
 using EduEco.Api.Security.Authorization;
+using EduEco.Api.Tenants;
 using EduEco.Application.Abstractions.Security;
+using EduEco.Application.Tenants;
 using EduEco.Infrastructure.Security;
 using EduEco.ServiceRegistry;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -35,10 +37,15 @@ internal static class ApiSetup
         services.AddEduEcoAuthorizationServices(configuration);
         services.AddEduEcoDPoP(configuration);
         services.AddSingleton<TokenIntrospectionService>();
+        services.AddSingleton<IdentityInternalClient>();
+        services.AddSingleton<ITenantAdminProvisioner>(sp => sp.GetRequiredService<IdentityInternalClient>());
+        // Api-side (not the shared ServiceRegistry): its provisioner port only has an implementation in this host.
+        services.AddScoped<TenantProvisioningService>();
 
         AddAuthentication(services, security, environment);
         AddAuthorization(services);
         AddRateLimiting(services, security);
+        AddCors(services, security);
 
         services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
@@ -73,6 +80,7 @@ internal static class ApiSetup
             return next(context);
         });
 
+        app.UseCors();
         app.UseAuthentication();
         app.UseRateLimiter();
         app.UseMiddleware<TenantStatusMiddleware>();
@@ -256,6 +264,21 @@ internal static class ApiSetup
         context.Fail(reason);
     }
 
+    /// <summary>
+    /// New for the Angular SPA (no browser-facing origin called this API directly before). Bearer-only: no
+    /// <c>AllowCredentials()</c>, since there is no cookie session to send cross-origin.
+    /// </summary>
+    private static void AddCors(IServiceCollection services, ApiSecurityOptions security)
+    {
+        services.AddCors(cors => cors.AddDefaultPolicy(policy =>
+        {
+            if (security.AllowedSpaOrigins.Count > 0)
+            {
+                policy.WithOrigins([.. security.AllowedSpaOrigins]).AllowAnyMethod().AllowAnyHeader();
+            }
+        }));
+    }
+
     private static void AddAuthorization(IServiceCollection services)
     {
         var authenticatedOnly = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
@@ -280,6 +303,17 @@ internal static class ApiSetup
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             limiter.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             {
+                // Anonymous credential-entry endpoints: IP-keyed, tighter budget than authenticated resource traffic.
+                if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api/v1/auth", StringComparison.OrdinalIgnoreCase))
+                {
+                    return RateLimitPartition.GetFixedWindowLimiter($"auth:{context.Connection.RemoteIpAddress}", _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = security.AuthEndpointPermitsPerMinute,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                    });
+                }
+
                 var key = context.User.GetClientId() is { } clientId
                     ? $"client:{clientId}:{context.User.GetSubject()}"
                     : $"ip:{context.Connection.RemoteIpAddress}";

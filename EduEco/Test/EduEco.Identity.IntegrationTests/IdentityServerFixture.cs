@@ -9,6 +9,7 @@ using EduEco.Core.Tenants;
 using EduEco.Database.Migrator;
 using EduEco.Database.Seeders;
 using EduEco.Identity.Controllers;
+using EduEco.Identity.Email;
 using EduEco.Identity.Logout;
 using EduEco.Infrastructure.Persistence;
 using EduEco.Infrastructure.Security;
@@ -46,6 +47,8 @@ public sealed class IdentityServerFixture : IAsyncLifetime
     public const string ParClientId = "it-web-par";
     public const string MobileClientId = "it-mobile";
     public const string ResourceClientId = Resources.Api; // resource server doubling as token-exchange/introspection client
+    public const string RopcClientId = "it-api-ropc";
+    public const string InternalApiClientId = "it-api-internal";
     public const string RedirectUri = "https://client.test/callback";
     public const string PostLogoutRedirectUri = "https://client.test/signed-out";
     public const string BackchannelLogoutUri = "https://client.test/backchannel-logout";
@@ -264,6 +267,23 @@ public sealed class IdentityServerFixture : IAsyncLifetime
             Resources = { Resources.Reporting },
             AllowIntrospection = true,
         };
+        seedOptions.Clients[RopcClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = clientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { OpenIddictConstants.GrantTypes.Password, "refresh_token" },
+            Scopes = { "openid", "profile", "email", "offline_access", Scopes.ApiRead, Scopes.ApiWrite },
+        };
+        seedOptions.Clients[InternalApiClientId] = new ClientSeed
+        {
+            ClientType = "confidential",
+            PublicKeyCertificatePath = clientCertificatePath,
+            PublicKeyCertificatePassword = CertificatePassword,
+            GrantTypes = { "client_credentials" },
+            Scopes = { Scopes.IdentityInternal },
+            Resources = { Resources.IdentityInternal },
+        };
 
         await new OpenIddictClientSeeder(
                 provider.GetRequiredService<IOpenIddictApplicationManager>(),
@@ -312,6 +332,7 @@ public sealed class IdentityServerFixture : IAsyncLifetime
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IEmailSender<ApplicationUser>>(emails);
+                services.AddSingleton<IProvisioningEmailSender>(emails);
                 services.AddHttpClient(BackchannelLogoutWorker.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => backchannel)
                     .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
@@ -332,7 +353,7 @@ public sealed class IdentityServerFixture : IAsyncLifetime
 }
 
 /// <summary>In-memory outbox replacing SMTP.</summary>
-public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>
+public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>, IProvisioningEmailSender
 {
     public ConcurrentQueue<(string To, string Kind, string Link)> Sent { get; } = new();
 
@@ -349,6 +370,18 @@ public sealed class CapturingEmailSender : IEmailSender<ApplicationUser>
     }
 
     public Task SendPasswordResetCodeAsync(ApplicationUser user, string email, string resetCode) => Task.CompletedTask;
+
+    public Task SendTenantAdminInvitationAsync(ApplicationUser user, string email, string tenantName, string setPasswordLink, string loginUrl)
+    {
+        Sent.Enqueue((email, "provision-invite", setPasswordLink));
+        return Task.CompletedTask;
+    }
+
+    public Task SendTenantAdminGrantedAsync(ApplicationUser user, string email, string tenantName, string loginUrl)
+    {
+        Sent.Enqueue((email, "provision-granted", loginUrl));
+        return Task.CompletedTask;
+    }
 
     public string? LastLinkFor(string email, string kind) =>
         Sent.Where(m => m.To == email && m.Kind == kind).Select(m => m.Link).LastOrDefault();

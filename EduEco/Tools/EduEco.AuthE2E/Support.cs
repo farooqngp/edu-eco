@@ -21,6 +21,7 @@ internal sealed record Settings(
     string CertificatePassword,
     string DevUserPassword)
 {
+    public const string PlatformAdmin = "platform.admin@eduEco.local";
     public const string TenantAdmin = "tenant.admin@demo.eduEco.local";
     public const string Teacher = "teacher@demo.eduEco.local";
 
@@ -266,6 +267,15 @@ internal sealed class Mailbox(Uri mailpit) : IDisposable
     /// <summary>Waits for the newest message to <paramref name="to"/> whose subject contains <paramref name="subject"/> and returns its first link.</summary>
     public async Task<Uri> WaitForLinkAsync(string to, string subject, TimeSpan timeout)
     {
+        var text = await WaitForBodyAsync(to, subject, timeout).ConfigureAwait(false);
+        var link = Regex.Match(text, @"https://\S+");
+        Expect.That(link.Success, $"no link in '{subject}' email");
+        return new Uri(link.Value);
+    }
+
+    /// <summary>Waits for that same message and returns its plain-text body (for emails carrying a code rather than a link).</summary>
+    public async Task<string> WaitForBodyAsync(string to, string subject, TimeSpan timeout)
+    {
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -278,10 +288,7 @@ internal sealed class Mailbox(Uri mailpit) : IDisposable
             {
                 var id = message.GetProperty("ID").GetString();
                 using var detail = JsonDocument.Parse(await _http.GetStringAsync(new Uri($"api/v1/message/{id}", UriKind.Relative)).ConfigureAwait(false));
-                var text = detail.RootElement.GetProperty("Text").GetString() ?? string.Empty;
-                var link = Regex.Match(text, @"https://\S+");
-                Expect.That(link.Success, $"no link in '{subject}' email");
-                return new Uri(link.Value);
+                return detail.RootElement.GetProperty("Text").GetString() ?? string.Empty;
             }
 
             await Task.Delay(500).ConfigureAwait(false);
