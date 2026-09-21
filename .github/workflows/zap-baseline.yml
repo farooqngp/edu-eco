@@ -42,6 +42,10 @@ jobs:
             "IDENTITY_CERT_PASSWORD=$(New-Secret)"
           ) | Set-Content -Path .env -Encoding utf8NoBOM
           ./tools/New-DevCertificates.ps1
+          # `dotnet dev-certs` exports aspnetcore-https.pfx as 0600, but the containers run as a non-root user and
+          # read ./certs through a bind mount, so they could not open it and every service crashed at startup.
+          # Throwaway certificates on a throwaway runner: making them readable is safe here.
+          chmod -R a+rX certs
 
       - name: Start stack
         run: |
