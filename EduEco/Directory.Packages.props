@@ -16,7 +16,7 @@
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.4" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.12" />
     <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
-    <PackageVersion Include="MailKit" Version="4.18.0" />
+    <PackageVersion Include="MailKit" Version="4.18.1" />
   </ItemGroup>
   <ItemGroup Label="Token handling (pinned so every host uses one IdentityModel version)">
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
