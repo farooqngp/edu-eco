@@ -28,7 +28,7 @@
   <ItemGroup Label="Azure (Key Vault, Data Protection)">
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.2" />
-    <PackageVersion Include="Azure.Security.KeyVault.Certificates" Version="4.9.1" />
+    <PackageVersion Include="Azure.Security.KeyVault.Certificates" Version="4.9.2" />
     <PackageVersion Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" Version="1.5.4" />
     <PackageVersion Include="Azure.Extensions.AspNetCore.DataProtection.Keys" Version="1.6.4" />
   </ItemGroup>
