@@ -18,7 +18,7 @@ COPY ServiceRegistry/ ServiceRegistry/
 COPY EduEco.Api/ EduEco.Api/
 RUN dotnet publish EduEco.Api/EduEco.Api.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 WORKDIR /app
 COPY --from=build /app .
 USER $APP_UID
