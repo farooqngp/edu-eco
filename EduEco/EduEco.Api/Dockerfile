@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: ./EduEco (solution folder). See docker-compose.yml at repo root.
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 COPY Directory.Build.props Directory.Packages.props nuget.config ./
