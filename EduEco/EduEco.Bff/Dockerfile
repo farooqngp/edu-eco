@@ -18,7 +18,7 @@ COPY ServiceRegistry/ ServiceRegistry/
 COPY EduEco.Bff/ EduEco.Bff/
 RUN dotnet publish EduEco.Bff/EduEco.Bff.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 WORKDIR /app
 
 # Data Protection key ring volume must be writable by the non-root app user.
