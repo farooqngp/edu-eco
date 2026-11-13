@@ -19,7 +19,7 @@ COPY ServiceRegistry/ ServiceRegistry/
 COPY EduEco.Database/ EduEco.Database/
 RUN dotnet publish EduEco.Database/EduEco.Database.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+FROM mcr.microsoft.com/dotnet/runtime:11.0 AS final
 WORKDIR /app
 COPY --from=build /app .
 USER $APP_UID
